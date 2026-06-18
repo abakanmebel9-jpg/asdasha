@@ -12,6 +12,7 @@ import httpx
 import json
 import logging
 import re
+import asyncio
 from html import unescape as html_unescape
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -104,26 +105,21 @@ async def fetch_news_json() -> Optional[List[Dict]]:
                 else:
                     logger.warning(f"HTTP {response.status_code} (attempt {attempt+1}/2)")
                     if attempt == 0:
-                        await asyncio_sleep(FETCH_RETRY_DELAY)
+                        await asyncio.sleep(FETCH_RETRY_DELAY)
         except httpx.TimeoutException:
             logger.warning(f"Timeout (attempt {attempt+1}/2, timeout={FETCH_TIMEOUT}s)")
             if attempt == 0:
-                await asyncio_sleep(FETCH_RETRY_DELAY)
+                await asyncio.sleep(FETCH_RETRY_DELAY)
         except Exception as e:
             logger.error(f"Fetch error: {e}")
             if attempt == 0:
-                await asyncio_sleep(FETCH_RETRY_DELAY)
+                await asyncio.sleep(FETCH_RETRY_DELAY)
 
     if not all_items:
         logger.error("News fetch failed. Will retry next cycle.")
         return None
 
     return all_items
-
-
-async def asyncio_sleep(seconds: float) -> None:
-    import asyncio
-    await asyncio.sleep(seconds)
 
 
 def _normalize_news_item(item: Dict) -> Optional[Dict]:
@@ -175,8 +171,12 @@ def _normalize_news_item(item: Dict) -> Optional[Dict]:
 
 
 async def run_news_cycle() -> int:
-    """Fetch news and store in DB. Returns count of new items."""
-    logger.info("Starting news cycle — fetching furniture news")
+    """Fetch news and store in DB. Returns count of new items.
+
+    Источник: abakanmebel9-jpg/par/data/furniture-news.json
+    Новости англоязычные — Даша адаптирует их на русский для канала.
+    """
+    logger.info("Starting news cycle — fetching furniture news from par repo")
 
     raw_items = await fetch_news_json()
     if not raw_items:

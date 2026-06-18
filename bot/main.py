@@ -206,7 +206,10 @@ class BackgroundTasks:
         await asyncio.sleep(120)
 
         interval_seconds = config.CHANNEL_POST_INTERVAL_MINUTES * 60
-        logger.info(f"Channel poster started — interval {config.CHANNEL_POST_INTERVAL_MINUTES}min (1 post/hour)")
+        logger.info(
+            f"Channel poster started — interval {config.CHANNEL_POST_INTERVAL_MINUTES}min "
+            f"(2 posts/hour, hourly limit={getattr(config, 'HOURLY_POST_LIMIT', 2)})"
+        )
 
         consecutive_empty = 0
 
@@ -310,9 +313,13 @@ async def main():
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    logger.info("=== Dasha Bot Starting — LOCAL-FIRST RuadaptQwen3-4B — @asdasha_bot ===")
+    logger.info("=== Dasha Bot Starting — LOCAL-ONLY RuadaptQwen3-4B — @asdasha_bot ===")
     local_status = "enabled" if config.ENABLE_LOCAL_MODEL else "disabled"
-    logger.info(f"Local model: {local_status}, Channel: {config.CHANNEL_USERNAME}")
+    logger.info(
+        f"Local model: {local_status}, Channel: {config.CHANNEL_USERNAME}, "
+        f"Schedule: 2 posts/hour (every {config.CHANNEL_POST_INTERVAL_MINUTES}min), "
+        f"Phone: {config.PHONE}"
+    )
 
     try:
         await dp.start_polling(bot)

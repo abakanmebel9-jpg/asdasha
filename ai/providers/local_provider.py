@@ -146,10 +146,27 @@ class LocalProvider(BaseAIProvider):
             else:
                 text = str(response).strip()
 
-            # Clean up Qwen3 think tags if present
-            if " " in text and " " in text:
-                think_end = text.find(" ") + len(" ")
-                text = text[think_end:].strip()
+            # Clean up Qwen3 <think>...</think> tags if present
+            # Qwen3 может выдавать reasoning-блок между <think> и </think>
+            if "<think>" in text:
+                think_start = text.find("<think>")
+                think_end = text.find("</think>")
+                if think_end != -1 and think_end > think_start:
+                    # Удаляем блок <think>...</think> целиком
+                    text = (text[:think_start] + text[think_end + len("</think>"):]).strip()
+                else:
+                    # Если закрывающего тега нет — отрезаем всё после <think>
+                    # (значит модель "задумалась" и не успела ответить)
+                    text = text[:think_start].strip()
+                if not text:
+                    logger.warning("Local model returned only <think> block, no actual answer")
+                    return AIResponse(
+                        text="",
+                        model=model or "local-qwen3-4b",
+                        provider="local",
+                        error="Model returned empty answer (only think block)",
+                        latency_ms=elapsed,
+                    )
 
             if text:
                 return AIResponse(

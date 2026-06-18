@@ -2,11 +2,13 @@
 Channel Manager — Posts to @abakan_mebel with proper formatting.
 Handles news posts, AI-generated content, and proper footer.
 
+РАСПИСАНИЕ: 2 поста в час (интервал 30 минут).
+
 Every post footer includes:
-  - Services: дизайн и производство мебели
-  - Phone from config
-  - Website: abakanmebel.online
-  - Signature: Автор @asdasha_bot
+  - Услуги: дизайн и производство мебели (кухни, шкафы-купе на заказ)
+  - Телефон организации: +7 (913) 448-37-17
+  - Сайт: abakanmebel.online
+  - Подпись: Автор @asdasha_bot
 """
 
 import logging
@@ -33,15 +35,18 @@ from ai.router import ai_router
 logger = logging.getLogger("dasha.channel")
 
 # Post footer — attached to EVERY channel post
+# Услуги организации: дизайн + производство мебели в Абакане
 POST_FOOTER_TEMPLATE = """
 ━━━━━━━━━━━━━━
-🛋 Мебель на заказ — дизайн и производство в Абакане
+🛋 Мебель на заказ в Абакане — дизайн и производство
+✨ Кухни · шкафы-купе · гардеробные · мебель по проекту
 📞 {phone}
 🌐 abakanmebel.online
+🛠 Гарантия 3 года · 25 лет опыта · 426+ проектов
 Автор @asdasha_bot
 ━━━━━━━━━━━━━━"""
 
-# Max characters: 4096 without media, 1024 with media
+# Max characters: 4096 without media, 1024 with media (Telegram limits)
 TELEGRAM_TEXT_LIMIT = 4096
 TELEGRAM_MEDIA_TEXT_LIMIT = 1024
 
@@ -50,25 +55,47 @@ def _build_footer() -> str:
     """Build the standard post footer with phone from config."""
     phone = getattr(config, "PHONE", "")
     if not phone:
-        phone = "свяжитесь через бота @asdasha_bot"
+        phone = "+7 (913) 448-37-17"
     return POST_FOOTER_TEMPLATE.format(phone=phone)
 
 
 def _truncate_for_channel(text: str, has_media: bool = False) -> str:
-    """Truncate text for Telegram channel limits."""
+    """Truncate text for Telegram channel limits.
+
+    Telegram limits:
+      - 4096 chars for text-only messages
+      - 1024 chars for messages with media (photo/video)
+    We reserve space for the footer + separators.
+    """
     limit = TELEGRAM_MEDIA_TEXT_LIMIT if has_media else TELEGRAM_TEXT_LIMIT
     footer = _build_footer()
     footer_len = len(footer)
-    max_body = limit - footer_len - 10  # 10 for separators
+    # Reserve: footer + 10 chars for "\n" separators
+    max_body = limit - footer_len - 10
+
+    if max_body < 200:
+        # Edge case — footer too big relative to limit
+        logger.warning(f"Footer too long ({footer_len}) for limit {limit}")
+        max_body = max(limit - footer_len - 10, 200)
 
     if len(text) > max_body:
-        text = text[:max_body].rsplit(' ', 1)[0] + "..."
+        # Truncate at word boundary
+        truncated = text[:max_body]
+        last_space = truncated.rfind(' ')
+        if last_space > max_body - 200:
+            text = truncated[:last_space] + "…"
+        else:
+            text = truncated + "…"
+        logger.info(f"Truncated post from {len(text)} to {len(text)} chars (limit {max_body})")
 
     return text + "\n" + footer
 
 
 class ChannelManager:
-    """Manages posting to @abakan_mebel channel."""
+    """Manages posting to @abakan_mebel channel.
+
+    Расписание: 2 поста в час (интервал 30 минут).
+    """
 
     def __init__(self):
         self._bot: Optional[Bot] = None
@@ -83,20 +110,18 @@ class ChannelManager:
             logger.error("Bot not set on channel manager")
             return False
 
-        # Check hourly rate limit (1 post per hour as requested)
-        now = datetime.now(ZoneInfo("Europe/Moscow"))
-        current_hour = now.hour
+        # Check daily rate limit (2 posts/hour × 24 = 48 max)
         today_count = await get_today_post_count()
-        
-        # Allow max 24 posts per day (1 per hour)
-        if today_count >= 24:
-            logger.info(f"Daily post limit reached ({today_count}/24)")
+        daily_limit = getattr(config, "DAILY_POST_LIMIT", 48)
+        if today_count >= daily_limit:
+            logger.info(f"Daily post limit reached ({today_count}/{daily_limit})")
             return False
 
-        # Check hourly limit
+        # Check hourly limit (2 posts per hour by default)
         hourly = await get_hourly_post_count()
-        if hourly >= 1:
-            logger.info(f"Hourly post limit reached ({hourly}/1)")
+        hourly_limit = getattr(config, "HOURLY_POST_LIMIT", 2)
+        if hourly >= hourly_limit:
+            logger.info(f"Hourly post limit reached ({hourly}/{hourly_limit})")
             return False
 
         # Get unposted news
@@ -114,7 +139,7 @@ class ChannelManager:
             await mark_news_posted(item["url"])
             return False
 
-        # Generate post using AI
+        # Generate post using AI (local model — PRIMARY)
         response = await ai_router.generate_channel_post(
             topic=item["title"],
             source_text=item.get("summary", ""),
@@ -126,7 +151,7 @@ class ChannelManager:
 
         # Clean and format post
         post_text = response.text.strip()
-        
+
         # Remove any existing footer (AI might generate one)
         footer_lines = ["Автор @asdasha_bot", "abakanmebel.online", "Мебель на заказ"]
         for line in footer_lines:
@@ -134,9 +159,18 @@ class ChannelManager:
         post_text = re.sub(r'━+', '', post_text).strip()
         post_text = re.sub(r'\n{3,}', '\n\n', post_text).strip()
 
-        # Add standard footer
+        # Add standard footer (with proper truncation for Telegram limits)
         has_media = bool(item.get("image_urls"))
         post_text = _truncate_for_channel(post_text, has_media=has_media)
+
+        # Verify final text fits Telegram limit (final safety check)
+        final_limit = TELEGRAM_MEDIA_TEXT_LIMIT if has_media else TELEGRAM_TEXT_LIMIT
+        if len(post_text) > final_limit:
+            logger.warning(
+                f"Post still too long after truncation: {len(post_text)} > {final_limit}, "
+                f"force truncating"
+            )
+            post_text = post_text[:final_limit - 3] + "…"
 
         # Check if this post is too similar to recent posts
         fingerprint = hashlib.md5(post_text.encode()).hexdigest()
@@ -161,6 +195,13 @@ class ChannelManager:
         # Fallback: text only
         if not sent:
             try:
+                # For text-only, re-truncate with the text-only limit
+                if has_media:
+                    # Rebuild without media limit
+                    body_match = re.match(r'^(.*?)\n━', post_text, re.DOTALL)
+                    if body_match:
+                        body = body_match.group(1).rstrip()
+                        post_text = _truncate_for_channel(body, has_media=False)
                 msg = await self._bot.send_message(
                     chat_id=config.CHANNEL_ID,
                     text=post_text,
@@ -193,13 +234,14 @@ class ChannelManager:
             return False
 
         hourly = await get_hourly_post_count()
-        if hourly >= 1:
+        hourly_limit = getattr(config, "HOURLY_POST_LIMIT", 2)
+        if hourly >= hourly_limit:
             return False
 
         if not topic:
-            # Pick a furniture design topic
+            # Pick a furniture design topic relevant to Abakan furniture company
             topics = [
-                "Современные тренды дизайна кухни",
+                "Современные тренды дизайна кухни 2025",
                 "Как выбрать матрас для здорового сна",
                 "Цветовые сочетания для гостиной",
                 "Эргономика рабочего места дома",
@@ -208,12 +250,27 @@ class ChannelManager:
                 "Как организовать хранение в маленькой квартире",
                 "Тренды мебельного дизайна 2025",
                 "Как выбрать кухонный гарнитур",
-                "Дизайн прихожей — первая впечатления",
+                "Дизайн прихожей — первое впечатление",
                 "Мебель для детской комнаты — безопасность и комфорт",
                 "Лофт стиль — как создать дома",
                 "Освещение в интерьере — правила и советы",
                 "МДФ или массив — что выбрать",
                 "Идеи для балкона и лоджии",
+                "Шкаф-купе: как выбрать наполнение",
+                "Гардеробная: планировка и организация",
+                "Кухонный остров: за и против",
+                "Фурнитура Blum — почему её выбирают",
+                "Эргономика кухни: рабочий треугольник",
+                "Дизайн спальни: как создать атмосферу уюта",
+                "Мебель для ванной: влагостойкие материалы",
+                "Угловой диван: как выбрать",
+                "Цветовая психология в интерьере",
+                "Минимализм в интерьере: меньше — значит больше",
+                "Неоклассика: современная классика в интерьере",
+                "Кухни на заказ: почему это выгодно",
+                "Как выбрать столешницу для кухни",
+                "Деревянная мебель: уход и реставрация",
+                "Эко-стиль: природа в интерьере",
             ]
             topic = random.choice(topics)
 
@@ -222,7 +279,17 @@ class ChannelManager:
             return False
 
         post_text = response.text.strip()
+        # Remove AI-generated footers if any
+        for line in ["Автор @asdasha_bot", "abakanmebel.online", "Мебель на заказ"]:
+            post_text = post_text.replace(line, "")
+        post_text = re.sub(r'━+', '', post_text).strip()
+        post_text = re.sub(r'\n{3,}', '\n\n', post_text).strip()
+
         post_text = _truncate_for_channel(post_text, has_media=False)
+
+        # Final safety check
+        if len(post_text) > TELEGRAM_TEXT_LIMIT:
+            post_text = post_text[:TELEGRAM_TEXT_LIMIT - 3] + "…"
 
         try:
             msg = await self._bot.send_message(
@@ -247,7 +314,7 @@ class ChannelManager:
         if not self._bot:
             return False
 
-        # Truncate text for media posts
+        # Truncate text for media posts (1024 char limit)
         text = _truncate_for_channel(text, has_media=True)
 
         # Download image
@@ -301,7 +368,7 @@ class ChannelManager:
 
     async def load_recent_data(self) -> None:
         """Load any needed data on startup."""
-        logger.info("Channel manager ready")
+        logger.info("Channel manager ready — 2 posts/hour schedule")
 
 
 # Global singleton

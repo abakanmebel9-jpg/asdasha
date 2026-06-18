@@ -135,11 +135,14 @@ class AIRouter:
         source_text: str = "",
         **kwargs,
     ) -> AIResponse:
-        """Generate a channel post about furniture/design."""
+        """Generate a channel post about furniture/design.
+
+        Использует ЛОКАЛЬНУЮ модель (RuadaptQwen3-4B) — PRIMARY.
+        """
         if not self._initialized:
             await self.initialize()
 
-        from bot.config import persona
+        from bot.config import config, persona
 
         from datetime import datetime
         from zoneinfo import ZoneInfo
@@ -152,20 +155,31 @@ class AIRouter:
             f"Тема: {topic}\n"
         )
         if source_text:
-            system_prompt += f"Исходный материал:\n{source_text[:2000]}\n"
+            system_prompt += (
+                f"Исходный материал (перескажи своими словами на русском, "
+                f"адаптируй для жителей Абакана и Хакасии):\n{source_text[:2000]}\n"
+            )
 
+        phone = getattr(config, "PHONE", "+7 (913) 448-37-17")
         system_prompt += (
-            "\nФОРМАТ ПОСТА:\n"
-            "1. Интересный заголовок (эмодзи)\n"
-            "2. Основной текст (2-4 абзаца, полезный и увлекательный)\n"
-            "3. Футер (ОБЯЗАТЕЛЬНО в каждом посте):\n"
-            "   ━━━━━━━━━━━━━━\n"
-            "   🛋 Мебель на заказ — дизайн и производство\n"
-            "   📞 [телефон с сайта]\n"
-            "   🌐 abakanmebel.online\n"
-            "   Автор @asdasha_bot\n"
-            "━━━━━━━━━━━━━━\n"
-            "Пиши на русском. Будь профессиональной но дружелюбной."
+            "\nФОРМАТ ПОСТА (СТРОГО):\n"
+            "1. Цепляющий заголовок с эмодзи (1 строка)\n"
+            "2. Пустая строка\n"
+            "3. Основной текст — 2-4 абзаца, полезный и увлекательный. "
+            "Пиши на русском языке, живо, как опытный дизайнер.\n"
+            "4. В конце НЕ пиши футер — он будет добавлен автоматически.\n\n"
+            "ВАЖНО:\n"
+            "- Пиши ТОЛЬКО на русском языке\n"
+            "- Не пиши контакты и телефон в тексте — они в футере\n"
+            "- Не используй markdown-разметку (нет **, ##, [link](url))\n"
+            "- Длина: 600-1500 символов основного текста\n"
+            "- Будь профессиональной но дружелюбной\n"
+            "- Уместно упоминай Абакан/Хакасию\n\n"
+            "Пример структуры (НЕ копируй, это ориентир):\n"
+            "🛋 Заголовок поста\n\n"
+            "Первый абзац — вводка, цепляет внимание.\n\n"
+            "Второй абзац — полезная информация.\n\n"
+            "Третий абзац — практический совет.\n"
         )
 
         messages = [{"role": "system", "content": system_prompt},
@@ -181,7 +195,10 @@ class AIRouter:
         chat_text: str,
         context: str = "",
     ) -> AIResponse:
-        """Generate a comment for a group chat."""
+        """Generate a comment for a group chat.
+
+        Использует ЛОКАЛЬНУЮ модель (RuadaptQwen3-4B) — PRIMARY.
+        """
         if not self._initialized:
             await self.initialize()
 
@@ -190,10 +207,12 @@ class AIRouter:
         system_prompt = (
             f"{persona['system_prompt']}\n\n"
             f"Ты комментируешь обсуждение в группе. Кратко, 1-3 предложения.\n"
-            f"Будь полезной как дизайнер мебели."
+            f"Будь полезной как дизайнер мебели. Пиши на русском.\n"
+            f"Если уместно — мягко предложи позвонить +7 (913) 448-37-17 "
+            f"или зайти на abakanmebel.online."
         )
         if context:
-            system_prompt += f"\nКонтекст: {context[:1000]}"
+            system_prompt += f"\nКонтекст обсуждения: {context[:1000]}"
 
         messages = [{"role": "system", "content": system_prompt},
                      {"role": "user", "content": chat_text}]

@@ -1,18 +1,19 @@
-name: Dasha Bot — LOCAL-FIRST v1.0 — Даша Дизайнер Мебели
+name: Dasha Bot — LOCAL-ONLY v1.1 — Даша Дизайнер Мебели
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Dasha Bot v1.0 — LOCAL-FIRST RuadaptQwen3-4B + CLOUD FAILOVER
+# Dasha Bot v1.1 — LOCAL-ONLY RuadaptQwen3-4B
 #
-#   - LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (~2.5GB GGUF, CPU)
+#   - LOCAL MODEL ONLY: RuadaptQwen3-4B-Instruct Q4_K_M (~2.5GB GGUF, CPU)
 #   - Russian-optimized tokenizer
-#   - LOCAL-FIRST for chat/comments (saves cloud balance!)
-#   - Pollinations AI as cloud fallback
+#   - Pollinations AI — аварийный fallback (только если модель недоступна)
 #   - Model caching via actions/cache@v4
 #   - HF_TOKEN for authenticated HuggingFace download
 #   - libopenblas-dev for fast CPU inference
 #
 # Schedule (UTC, Krasnoyarsk = UTC+7, Moscow = UTC+3):
 #   Every 5 hours: 00:00, 05:00, 10:00, 15:00, 20:00
+#
+# CHANNEL POSTING: 2 posts per hour (interval 30 min)
 # ═══════════════════════════════════════════════════════════════════════════
 
 on:
@@ -210,15 +211,18 @@ jobs:
           # Database
           DB_PATH: data/dasha_bot.db
           LOG_LEVEL: INFO
-          # Schedule settings — 1 post per hour
+          # Schedule settings — 2 posts per hour (interval 30 min)
           NEWS_INTERVAL_MINUTES: "30"
-          CHANNEL_POST_INTERVAL_MINUTES: "60"
+          CHANNEL_POST_INTERVAL_MINUTES: "30"
+          HOURLY_POST_LIMIT: "2"
+          DAILY_POST_LIMIT: "48"
         run: |
-          echo "=== Starting Dasha Bot v1.0 — LOCAL-FIRST ==="
-          echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY)"
-          echo "CLOUD: Pollinations (fallback)"
-          echo "CHANNEL: @abakan_mebel (1 post/hour)"
+          echo "=== Starting Dasha Bot v1.1 — LOCAL-ONLY ==="
+          echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY, ONLY)"
+          echo "CLOUD: Pollinations (аварийный fallback только)"
+          echo "CHANNEL: @abakan_mebel (2 posts/hour, every 30 min)"
           echo "NEWS: furniture-news.json from abakanmebel9-jpg/par"
+          echo "PHONE: +7 (913) 448-37-17"
           echo "=== Launching bot with UNLIMITED auto-restart ==="
 
           RETRY=0
