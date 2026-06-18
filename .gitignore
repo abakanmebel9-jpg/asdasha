@@ -1,0 +1,43 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Environment
+.env
+*.env.local
+
+# Database
+data/*.db
+data/*.db-journal
+data/*.db-wal
+*.db
+*.db-journal
+*.db-wal
+
+# Models (large files, cached by GitHub Actions)
+models/
+*.gguf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary
+/tmp/
+*.tmp
