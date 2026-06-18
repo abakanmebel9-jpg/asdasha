@@ -17,7 +17,7 @@ from aiogram.enums import ChatAction
 from bot.config import config, persona
 from bot.database import (
     get_or_create_user, is_user_blocked, add_chat_message,
-    clear_chat_history, check_rate_limit,
+    clear_chat_history,
 )
 from bot.dasha import (
     DASHA_PHRASES, identify_furniture_topic, get_material_advice,
