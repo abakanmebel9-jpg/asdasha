@@ -128,6 +128,57 @@ class ProviderManager:
         return AIResponse(text="", model=model, provider="none",
                           error="Image generation failed")
 
+    async def chat_local_only(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        **kwargs: Any,
+    ) -> AIResponse:
+        """Generate using LOCAL model ONLY — no cloud fallback.
+
+        Useful for channel post generation and other scenarios where
+        we want to guarantee local-only processing (no data leaves the machine).
+        """
+        self._total_requests += 1
+
+        if not self.local:
+            return AIResponse(
+                text="", model="local", provider="none",
+                error="chat_local_only called but no local provider configured",
+            )
+
+        try:
+            local_avail = await self.local.is_available()
+        except Exception:
+            local_avail = False
+
+        if not local_avail:
+            return AIResponse(
+                text="", model="local", provider="none",
+                error="Local model not available for local-only generation",
+            )
+
+        local_max = min(max_tokens, 2048)
+        try:
+            result = await self.local.chat(
+                messages=messages, model="local-qwen3-4b",
+                temperature=temperature, max_tokens=local_max, **kwargs,
+            )
+            if result.ok:
+                self._last_provider = "local"
+                self._local_count += 1
+                return result
+            else:
+                logger.warning(f"chat_local_only error: {result.error}")
+                return result
+        except Exception as exc:
+            logger.error(f"chat_local_only exception: {exc}")
+            return AIResponse(
+                text="", model="local", provider="none",
+                error=f"Local model exception in chat_local_only: {exc}",
+            )
+
     def is_available(self) -> bool:
         return True
 

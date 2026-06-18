@@ -20,7 +20,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, PhotoSize
 from aiogram.enums import ChatAction
 
-from bot.config import config, persona
+from bot.config import config
 from bot.database import (
     get_or_create_user, is_user_blocked, add_chat_message,
     clear_chat_history,
@@ -33,7 +33,7 @@ from bot.dasha import (
     ABAKAN_KNOWLEDGE, PRODUCTION_PROCESS,
 )
 from ai.router import ai_router
-from bot.optimizations import adaptive_max_chars, chat_type_context
+from bot.optimizations import adaptive_max_chars, chat_type_context, dedup_check, dedup_store
 
 logger = logging.getLogger("dasha.handlers.chat")
 
@@ -291,6 +291,12 @@ async def handle_text_message(message: Message):
     if not text:
         return
 
+    # Dedup check — skip if same message was recently processed
+    cached_reply = dedup_check(message.from_user.id, text)
+    if cached_reply:
+        await message.answer(cached_reply)
+        return
+
     chat_type = message.chat.type
 
     # ═══ GROUP / SUPERGROUP LOGIC ═══
@@ -321,33 +327,37 @@ async def handle_text_message(message: Message):
 
     # Build enhanced context from knowledge base
     knowledge_context = build_knowledge_context(text)
+    # Limit knowledge context to prevent prompt bloat
+    if knowledge_context and len(knowledge_context) > 500:
+        knowledge_context = knowledge_context[:500] + "..."
 
-    # Enhance system prompt with knowledge if found
-    system_prompt = persona["system_prompt"]
+    # Build dynamic context additions (NOT the full persona — router uses compact prompt)
+    # These additions are APPENDED to the router's compact system prompt
+    context_additions = ""
     if knowledge_context:
-        system_prompt += f"\n\nРелевантные знания из твоей базы:\n{knowledge_context}"
+        context_additions += f"\n\nРелевантные знания:\n{knowledge_context}"
 
     # Add group context if in group
     if chat_type in ("group", "supergroup"):
-        system_prompt += chat_type_context(message)
-        system_prompt += (
+        context_additions += chat_type_context(message)
+        context_additions += (
             "\n\nТы комментируешь в группе. Отвечай КРАТКО (1-5 предложений), "
             "по делу, как полезный комментарий. Не пиши длинных лекций. "
             "Если уместно — предложи позвонить или зайти на сайт."
         )
 
-    # Add phone info to system prompt if user asks
+    # Add phone info if user asks
     phone = config.PHONE
     if phone and detect_phone_request(text):
-        system_prompt += f"\n\nВАЖНО: Пользователь спрашивает телефон. Дай номер: {phone} (WhatsApp: wa.me/79134483717)"
+        context_additions += f"\n\nВАЖНО: Пользователь спрашивает телефон. Дай номер: {phone} (WhatsApp: wa.me/79134483717)"
 
     # Add delivery info if relevant
     if detect_delivery_interest(text):
-        system_prompt += "\n\nINFO: Доставка по Абакану — БЕСПЛАТНО. По Хакасии (Черногорск, Саяногорск и др.) — по договорённости. Сборка включена."
+        context_additions += "\n\nINFO: Доставка по Абакану — БЕСПЛАТНО. По Хакасии — по договорённости. Сборка включена."
 
     # Add price info context
     if detect_price_interest(text):
-        system_prompt += "\n\nINFO: Кухни от 45 000 руб. Для точного расчёта нужен бесплатный замер (по всей Хакасии). Направь клиента на сайт abakanmebel.online или предложи вызвать замерщика."
+        context_additions += "\n\nINFO: Кухни от 45 000 руб. Для точного расчёта нужен бесплатный замер. Направь на abakanmebel.online."
 
     # Direct phone requests — answer immediately (skip AI for speed)
     if detect_phone_request(text) and phone:
@@ -359,11 +369,11 @@ async def handle_text_message(message: Message):
         await add_chat_message(message.from_user.id, "assistant", phone_response)
         return
 
-    # Get AI response
+    # Get AI response (router uses compact system prompt + our additions)
     response = await ai_router.chat(
         user_id=message.from_user.id,
         message=text,
-        system_prompt=system_prompt,
+        system_prompt=context_additions,  # Appended to compact prompt by router
         route_type=route_type,
         save_history=(chat_type == "private"),
     )
@@ -371,6 +381,7 @@ async def handle_text_message(message: Message):
     # Handle response
     if response.ok and response.text:
         reply = response.text.strip()
+        dedup_store(message.from_user.id, text, reply)
         # Truncate if too long for this chat type
         if len(reply) > max_chars:
             reply = reply[:max_chars - 3] + "…"

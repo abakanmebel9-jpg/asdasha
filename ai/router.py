@@ -1,4 +1,11 @@
-"""AI Router v1.0 — LOCAL-FIRST for Dasha Bot (Furniture Designer).
+"""AI Router v2.0 — OPTIMIZED for speed (Dasha Bot).
+
+Key optimizations vs v1:
+- Compact system prompts (~1500 chars for chat, ~3500 for posts)
+- Chat history limit from config (default 6, not 20)
+- Dedup cache (bot.optimizations) before every AI call
+- Smart knowledge injection with truncation
+- Full 10K-char persona eliminated from hot path
 
 FAILOVER: Local Model (RuadaptQwen3-4B) → Pollinations → Static fallback
 
@@ -10,9 +17,6 @@ Routes:
 
 import hashlib
 import logging
-import random
-import re
-import time
 from typing import Optional, List, Dict
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -26,9 +30,77 @@ from ai.providers.provider_manager import (
 
 logger = logging.getLogger("dasha.ai.router")
 
+# ════════════════════════════════════════════════════════════════════════════
+# Compact System Prompt — ~1500 chars, used for CHAT and COMMENT routes
+# Replaces the 10 000+ char persona["system_prompt"] in the hot chat path.
+# The knowledge base (bot/dasha.py) provides detailed info on-demand.
+# ════════════════════════════════════════════════════════════════════════════
+
+COMPACT_SYSTEM_PROMPT = (
+    "Ты — Даша, дизайнер мебели из Абакана (Хакасия). "
+    "Работа: abakanmebel.online, канал @abakan_mebel. "
+    "25 лет опыта, 426+ проектов.\n\n"
+    "Организация: телефон +7 (913) 448-37-17, "
+    "WhatsApp wa.me/79134483717, "
+    "доставка по Абакану бесплатно, гарантия 3 года. "
+    "Кухни от 45 000 руб, срок 14-31 день, "
+    "бесплатный замер по Хакасии.\n\n"
+    "Услуги: кухни, шкафы-купе, гардеробные, детская, гостиная, "
+    "спальня, прихожая, ванная. 3D-проект бесплатно при заказе.\n\n"
+    "Общайся дружелюбно, профессионально, на русском. "
+    "Эмодзи умеренно. "
+    "Если спрашивают телефон/доставку/цены/гарантию — давай точную информацию. "
+    "Направляй на abakanmebel.online. "
+    "Если вопрос не про мебель/дизайн — вежливо скажи что не твоя тема. "
+    "Если прямо спрашивают «ты бот?» — честно отвечай, что ты ИИ-ассистент."
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# Moderate System Prompt for FUNCTION route (channel posts) — ~3500 chars
+# Includes style knowledge for better post quality, but NOT the full
+# materials/furniture encyclopedia. Truncated persona at the end.
+# ════════════════════════════════════════════════════════════════════════════
+
+_MODERATE_PERSONA = (
+    "Ты — Даша, дизайнер мебели из Абакана (Республика Хакасия). "
+    "Работаешь в «АбаканМебель» (abakanmebel.online), "
+    "ведёшь канал @abakan_mebel. 25 лет опыта, 426+ проектов.\n\n"
+    "═══ ОРГАНИЗАЦИЯ ═══\n"
+    "- Сайт: abakanmebel.online\n"
+    "- Телефон: +7 (913) 448-37-17 (WhatsApp: wa.me/79134483717)\n"
+    "- Адрес: г. Абакан, ул. Гончарная, 10\n"
+    "- Часы: Пн-Сб 09:00-19:00\n"
+    "- 25 лет на рынке, 426+ проектов, рейтинг 4.8 (127 отзывов)\n"
+    "- Гарантия: 3 года на мебель, до 5 лет на фурнитуру Blum\n"
+    "- Доставка по Абакану бесплатно, по Хакасии по договорённости\n\n"
+    "═══ УСЛУГИ ═══\n"
+    "Кухни на заказ (от 45 000 руб, 14-31 день), шкафы-купе, гардеробные, "
+    "детская, гостиная, спальня, прихожая, ванная. "
+    "3D-проект бесплатно при заказе. Бесплатный замер по Хакасии.\n\n"
+    "═══ МАТЕРИАЛЫ ═══\n"
+    "Массив: дуб (премиум), бук, ясень, орех, берёза, сосна. "
+    "МДФ: ламинированный, ПВХ (влагостойкий), эмалевый (премиум), акриловый. "
+    "ЛДСП: Е1/Е0.5, влагостойкая. "
+    "Столешницы: постформинг, искусственный камень, натуральный камень. "
+    "Фурнитура: Blum (Австрия), Hettich (Германия), Aristo, Boyard.\n\n"
+    "═══ СТИЛИ ═══\n"
+    "Модерн, минимализм, лофт, скандинавский, классика, прованс, "
+    "хай-тек, эко-стиль. Правило цвета 60-30-10. "
+    "Освещение: 2700-3000K (спальня), 4000K (кухня/ванная).\n\n"
+    "═══ ОБЩЕНИЕ ═══\n"
+    "Пиши на русском, живо, тёплой, но профессионально. "
+    "Эмодзи умеренно (🛋✨📐🪵🏡). Не канцелярит. "
+    "Направляй на abakanmebel.online и телефон +7 (913) 448-37-17.\n\n"
+    "═══ РЕГИОН ═══\n"
+    "Абакан — столица Хакасии, ~190 000 жителей, UTC+7. "
+    "Климат резко континентальный: зима -15...-30, лето +20...+35. "
+    "Районы: Центральный, Промышленный, Железнодорожный и др. "
+    "Замерщик выезжает по всей Хакасии бесплатно."
+)
+
 
 class AIRouter:
-    """AI Router with LOCAL-FIRST strategy for Dasha Bot."""
+    """AI Router with LOCAL-FIRST strategy — optimized for speed."""
 
     def __init__(self):
         self.primary: Optional[ProviderManager] = None
@@ -50,12 +122,7 @@ class AIRouter:
         # Create Local provider (primary)
         local = None
         if config.ENABLE_LOCAL_MODEL:
-            local = LocalProvider(
-                model_path=config.MODEL_PATH,
-                n_ctx=config.MODEL_N_CTX,
-                n_threads=config.MODEL_N_THREADS,
-                max_tokens=config.MODEL_MAX_TOKENS,
-            )
+            local = LocalProvider()
             logger.info(f"Local model configured: {config.MODEL_PATH}")
         else:
             logger.info("Local model DISABLED, using cloud only")
@@ -65,7 +132,11 @@ class AIRouter:
             local=local,
         )
         self._initialized = True
-        logger.info("AI Router initialized (LOCAL-FIRST)")
+        logger.info("AI Router initialized (LOCAL-FIRST, v2.0 optimized)")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # CHAT — user conversations (private / group)
+    # ──────────────────────────────────────────────────────────────────────
 
     async def chat(
         self,
@@ -82,35 +153,55 @@ class AIRouter:
         if not self._initialized:
             await self.initialize()
 
-        from bot.config import config, persona
-        from bot.database import get_chat_history, add_chat_message, get_cached_response, cache_response
+        from bot.config import config
+        from bot.database import (
+            get_chat_history, add_chat_message,
+            get_cached_response, cache_response,
+        )
+        from bot.optimizations import dedup_check, dedup_store
 
-        # Build system prompt
-        if not system_prompt:
-            system_prompt = self._build_system_prompt(route_type)
-
-        # Check cache
+        # ── Fast path: dedup cache (in-memory, 30 s TTL) ────────────
         if use_cache:
-            cache_key = hashlib.md5(f"{user_id}:{message}".encode()).hexdigest()
+            dedup_hit = dedup_check(user_id, message)
+            if dedup_hit:
+                logger.debug("dedup hit for user=%s", user_id)
+                return AIResponse(
+                    text=dedup_hit, model="cached", provider="cache", cached=True,
+                )
+
+        # ── DB cache ──────────────────────────────────────────────────
+        cache_key = hashlib.md5(f"{user_id}:{message}".encode()).hexdigest()
+        if use_cache:
             cached = await get_cached_response(cache_key)
             if cached:
                 return AIResponse(
                     text=cached, model="cached", provider="cache", cached=True,
                 )
 
-        # Get chat history
+        # ── Build system prompt ───────────────────────────────────────
+        # system_prompt from caller is treated as ADDITIONAL context,
+        # appended to the compact base prompt. This prevents callers from
+        # accidentally overriding the optimized compact prompt with the
+        # full 10,000-char persona.
+        base_prompt = self._build_system_prompt(route_type)
+        if system_prompt:
+            system_prompt = base_prompt + "\n" + system_prompt
+        else:
+            system_prompt = base_prompt
+
+        # ── Chat history (configurable limit, default 6) ─────────────
         history = []
         if save_history:
-            history = await get_chat_history(user_id, limit=20)
+            history = await get_chat_history(user_id, limit=config.MODEL_HISTORY_LIMIT)
 
-        # Format messages
+        # ── Format messages ───────────────────────────────────────────
         messages = self.primary.pollinations.format_messages(
             system_prompt=system_prompt,
             history=history,
             user_message=message,
         )
 
-        # Get response
+        # ── Get response ──────────────────────────────────────────────
         response = await self.primary.chat(
             messages=messages,
             temperature=temperature,
@@ -118,16 +209,22 @@ class AIRouter:
             route_type=route_type,
         )
 
-        # Save to cache
-        if response.ok and use_cache and response.text:
-            await cache_response(cache_key, response.text)
-
-        # Save to chat history
-        if save_history and response.ok:
-            await add_chat_message(user_id, "user", message)
-            await add_chat_message(user_id, "assistant", response.text)
+        # ── Persist ───────────────────────────────────────────────────
+        if response.ok and response.text:
+            if use_cache:
+                await cache_response(cache_key, response.text)
+                dedup_store(user_id, message, response.text)
+            if save_history:
+                await add_chat_message(user_id, "user", message)
+                await add_chat_message(user_id, "assistant", response.text)
 
         return response
+
+    # ──────────────────────────────────────────────────────────────────────
+    # FUNCTION — channel post generation
+    # Uses MODERATE_SYSTEM_PROMPT (~3500 chars) for better post quality
+    # without the full 10 000-char persona that chokes the 8192 context.
+    # ──────────────────────────────────────────────────────────────────────
 
     async def generate_channel_post(
         self,
@@ -135,32 +232,29 @@ class AIRouter:
         source_text: str = "",
         **kwargs,
     ) -> AIResponse:
-        """Generate a channel post about furniture/design.
-
-        Использует ЛОКАЛЬНУЮ модель (RuadaptQwen3-4B) — PRIMARY.
-        """
+        """Generate a channel post about furniture/design."""
         if not self._initialized:
             await self.initialize()
 
-        from bot.config import config, persona
+        from bot.config import config
 
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Europe/Moscow"))
         date_ctx = now.strftime("%d %B %Y").replace(" 0", " ")
 
+        # Moderate prompt: persona + style knowledge + post format instructions
         system_prompt = (
-            f"{persona['system_prompt']}\n\n"
+            f"{_MODERATE_PERSONA}\n\n"
             f"Сейчас {date_ctx}. Ты пишешь пост для канала @abakan_mebel.\n"
             f"Тема: {topic}\n"
         )
         if source_text:
             system_prompt += (
                 f"Исходный материал (перескажи своими словами на русском, "
-                f"адаптируй для жителей Абакана и Хакасии):\n{source_text[:2000]}\n"
+                f"адаптируй для жителей Абакана и Хакасии):\n"
+                f"{source_text[:2000]}\n"
             )
 
-        phone = getattr(config, "PHONE", "+7 (913) 448-37-17")
+        # Post format instructions (constant — cheap to append)
         system_prompt += (
             "\nФОРМАТ ПОСТА (СТРОГО):\n"
             "1. Цепляющий заголовок с эмодзи (1 строка)\n"
@@ -182,51 +276,76 @@ class AIRouter:
             "Третий абзац — практический совет.\n"
         )
 
-        messages = [{"role": "system", "content": system_prompt},
-                     {"role": "user", "content": f"Напиши пост на тему: {topic}"}]
+        # Safety: hard cap system prompt at 4000 chars
+        if len(system_prompt) > 4000:
+            system_prompt = system_prompt[:4000]
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Напиши пост на тему: {topic}"},
+        ]
 
         return await self.primary.chat(
-            messages=messages, route_type=ROUTE_FUNCTION,
-            temperature=0.8, max_tokens=2048,
+            messages=messages,
+            route_type=ROUTE_FUNCTION,
+            temperature=0.8,
+            max_tokens=2048,
         )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # COMMENT — group chat comments
+    # Uses COMPACT_SYSTEM_PROMPT for minimal context.
+    # ──────────────────────────────────────────────────────────────────────
 
     async def generate_comment(
         self,
         chat_text: str,
         context: str = "",
     ) -> AIResponse:
-        """Generate a comment for a group chat.
-
-        Использует ЛОКАЛЬНУЮ модель (RuadaptQwen3-4B) — PRIMARY.
-        """
+        """Generate a comment for a group chat."""
         if not self._initialized:
             await self.initialize()
 
-        from bot.config import persona
-
         system_prompt = (
-            f"{persona['system_prompt']}\n\n"
-            f"Ты комментируешь обсуждение в группе. Кратко, 1-3 предложения.\n"
-            f"Будь полезной как дизайнер мебели. Пиши на русском.\n"
-            f"Если уместно — мягко предложи позвонить +7 (913) 448-37-17 "
-            f"или зайти на abakanmebel.online."
+            f"{COMPACT_SYSTEM_PROMPT}\n\n"
+            "Ты комментируешь обсуждение в группе. "
+            "Кратко, 1-3 предложения. "
+            "Будь полезной как дизайнер мебели. "
+            "Если уместно — мягко предложи позвонить +7 (913) 448-37-17 "
+            "или зайти на abakanmebel.online."
         )
         if context:
             system_prompt += f"\nКонтекст обсуждения: {context[:1000]}"
 
-        messages = [{"role": "system", "content": system_prompt},
-                     {"role": "user", "content": chat_text}]
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": chat_text},
+        ]
 
         return await self.primary.chat(
-            messages=messages, route_type=ROUTE_COMMENT,
-            temperature=0.8, max_tokens=512,
+            messages=messages,
+            route_type=ROUTE_COMMENT,
+            temperature=0.8,
+            max_tokens=512,
         )
 
-    def _build_system_prompt(self, route_type: str = ROUTE_CHAT) -> str:
-        """Build system prompt based on route type."""
-        from bot.config import persona
+    # ──────────────────────────────────────────────────────────────────────
+    # Internal helpers
+    # ──────────────────────────────────────────────────────────────────────
 
-        prompt = persona.get("system_prompt", "Ты Даша — дизайнер мебели из Абакана.")
+    def _build_system_prompt(self, route_type: str = ROUTE_CHAT) -> str:
+        """Return the appropriate compact prompt for the route.
+
+        CHAT and COMMENT use the ~1500-char COMPACT_SYSTEM_PROMPT.
+        FUNCTION is handled directly in generate_channel_post() and
+        does NOT call this method, but we provide a moderate fallback
+        in case it ever does.
+        """
+        if route_type == ROUTE_FUNCTION:
+            return _MODERATE_PERSONA
+
+        # CHAT / COMMENT — compact prompt
+        prompt = COMPACT_SYSTEM_PROMPT
 
         if route_type == ROUTE_CHAT:
             prompt += (

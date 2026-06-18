@@ -56,7 +56,13 @@ class BotConfig:
     MODEL_PATH: str = os.getenv("MODEL_PATH", "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf")
     MODEL_N_CTX: int = int(os.getenv("MODEL_N_CTX", "8192"))
     MODEL_N_THREADS: int = int(os.getenv("MODEL_N_THREADS", "3"))
-    MODEL_MAX_TOKENS: int = int(os.getenv("MODEL_MAX_TOKENS", "1024"))
+    MODEL_MAX_TOKENS: int = int(os.getenv("MODEL_MAX_TOKENS", "2048"))
+
+    # Model auto-download settings
+    MODEL_AUTO_DOWNLOAD: bool = os.getenv("MODEL_AUTO_DOWNLOAD", "true").lower() == "true"
+    MODEL_DOWNLOAD_URL: str = os.getenv("MODEL_DOWNLOAD_URL", "https://huggingface.co/RefalMachine/RuadaptQwen3-4B-Instruct-GGUF/resolve/main/Q4_K_M.gguf")
+    MODEL_HISTORY_LIMIT: int = int(os.getenv("MODEL_HISTORY_LIMIT", "6"))
+    # HuggingFace token is already defined above
 
     # Database
     DB_PATH: str = os.getenv("DB_PATH", "data/dasha_bot.db")
