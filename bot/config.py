@@ -126,6 +126,17 @@ class BotConfig:
     # Игнорировать сообщения от других ботов (предотвращает циклы)
     GROUP_IGNORE_BOTS: bool = os.getenv("GROUP_IGNORE_BOTS", "true").lower() == "true"
 
+    # ════════════════════════════════════════════════════════════════════════
+    # LOCAL MODEL ROUTING
+    # Локальная модель (RuadaptQwen3-4B на CPU) генерирует ~85с на ответ —
+    # слишком медленно для real-time групповых комментариев. Поэтому:
+    #   - CHAT (личка):       local OK (качество важнее, клиент готов ждать)
+    #   - FUNCTION (канал):   local OK (посты делаются в фоне, 30 мин интервал)
+    #   - COMMENT (группы):   cloud-only (Pollinations ~18с — в 5 раз быстрее)
+    # Это предотвращает "Local model busy" и очереди при активных групповых чатах.
+    # ════════════════════════════════════════════════════════════════════════
+    LOCAL_FOR_COMMENTS: bool = os.getenv("LOCAL_FOR_COMMENTS", "false").lower() == "true"
+
 
 # Persona system prompt for Dasha
 persona = {

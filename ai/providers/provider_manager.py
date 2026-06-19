@@ -85,8 +85,19 @@ class ProviderManager:
         # Build ordered list of providers to try
         providers = self._build_fallback_chain()
 
-        # ── STEP 1: TRY LOCAL MODEL (with SHORT timeout for speed) ──
-        if self.local:
+        # ── DECIDE: should we try the local model for this route? ──
+        # Local model (RuadaptQwen3-4B on CPU) takes ~85s per response — too slow
+        # for real-time group comments. Skip it for COMMENT route unless explicitly
+        # enabled via LOCAL_FOR_COMMENTS=true. Keep local for CHAT (private) and
+        # FUNCTION (channel posts) where quality matters and latency is acceptable.
+        try:
+            from bot.config import config
+            use_local = config.LOCAL_FOR_COMMENTS or route_type != ROUTE_COMMENT
+        except Exception:
+            use_local = True  # Fallback to old behavior if config unavailable
+
+        # ── STEP 1: TRY LOCAL MODEL (only for CHAT/FUNCTION, or if enabled) ──
+        if self.local and use_local:
             # Use shorter max_tokens for comments to speed up local model
             local_max = self._local_max(route_type, max_tokens)
             result = await self._try_provider(
@@ -98,6 +109,8 @@ class ProviderManager:
                 return result
             # If local is busy/error — skip immediately, go to cloud
             logger.info(f"Local model skipped ({result.error}), trying cloud providers...")
+        elif self.local and not use_local:
+            logger.debug(f"Local model bypassed for {route_type} route (cloud-only for speed)")
 
         # ── STEP 2-N: TRY CLOUD PROVIDERS IN ORDER ──
         cloud_providers = providers  # All non-local providers
@@ -111,7 +124,7 @@ class ProviderManager:
                 return result
 
         # ── ALL PROVIDERS FAILED ──
-        logger.error("ALL providers failed (Local + %d cloud providers)", len(cloud_providers))
+        logger.error("ALL providers failed (Local=%s, %d cloud providers)", use_local, len(cloud_providers))
         return AIResponse(
             text="", model=model, provider="none",
             error="All AI providers failed",
