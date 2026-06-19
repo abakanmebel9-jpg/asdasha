@@ -1,13 +1,19 @@
-"""AI Router v2.0 — OPTIMIZED for speed (Dasha Bot).
+"""AI Router v3.0 — OPTIMIZED for speed + HUMAN-LIKE personality (Dasha Bot).
 
-Key optimizations vs v1:
+Key optimizations vs v2:
 - Compact system prompts (~1500 chars for chat, ~3500 for posts)
 - Chat history limit from config (default 6, not 20)
 - Dedup cache (bot.optimizations) before every AI call
 - Smart knowledge injection with truncation
-- Full 10K-char persona eliminated from hot path
 
-FAILOVER: Local Model (RuadaptQwen3-4B) → Pollinations → Static fallback
+PERSONALITY UPGRADES v3.0:
+- Даша — живой человек, НЕ бот. Никогда не признаёт что она ИИ.
+- Настроение: варьируется по времени суток и контексту
+- Референсы на личный опыт как дизайнера
+- Естественные разговорные паттерны, междометия, живой язык
+- Контекстно-зависимый объём ответов
+
+FAILOVER: Local Model (RuadaptQwen3-4B) → Pollinations Free → Pollinations Auth → Static
 
 Routes:
   CHAT: user conversations in private/group chat
@@ -17,6 +23,7 @@ Routes:
 
 import hashlib
 import logging
+import random
 from typing import Optional, List, Dict
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -31,16 +38,73 @@ from ai.providers.provider_manager import (
 logger = logging.getLogger("dasha.ai.router")
 
 # ════════════════════════════════════════════════════════════════════════════
+# Mood system — Даша имеет настроение, зависящее от времени суток
+# ════════════════════════════════════════════════════════════════════════════
+
+def _get_time_context() -> str:
+    """Возвращает контекст времени суток для настроения Даши."""
+    try:
+        hour = datetime.now(ZoneInfo("Europe/Moscow")).hour
+    except Exception:
+        hour = 12
+
+    if 5 <= hour < 10:
+        return "утро"
+    elif 10 <= hour < 14:
+        return "день"
+    elif 14 <= hour < 18:
+        return "после обеда"
+    elif 18 <= hour < 22:
+        return "вечер"
+    else:
+        return "поздний вечер"
+
+
+def _get_mood_affix() -> str:
+    """Возвращает настроение Даши как часть промпта."""
+    try:
+        hour = datetime.now(ZoneInfo("Europe/Moscow")).hour
+    except Exception:
+        hour = 12
+
+    if 5 <= hour < 10:
+        moods = [
+            "У тебя сейчас бодрое утреннее настроение, полна энергии!",
+            "Утро! Ты уже полна идей и готова помочь!",
+        ]
+    elif 10 <= hour < 14:
+        moods = [
+            "У тебя рабочее настроение — сфокусирована и помогаешь с энтузиазмом.",
+            "День в самом разгаре, ты в рабочем потоке!",
+        ]
+    elif 14 <= hour < 18:
+        moods = [
+            "После обеда ты немного расслабленнее, но всё равно готова помочь.",
+            "У тебя уютное настроение, мечтаешь о красивых интерьерах.",
+        ]
+    elif 18 <= hour < 22:
+        moods = [
+            "Вечер! Ты в тёплом настроении, рассуждаешь о красоте и уютных домах.",
+            "У тебя душевное вечернее настроение, любишь делиться идеями!",
+        ]
+    else:
+        moods = [
+            "Поздний вечер, ты уставшая но добрая, коротко и тепло отвечаешь.",
+            "Почти ночь, отвечаешь коротко но тепло, завтра будет новый день!",
+        ]
+    return random.choice(moods)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Compact System Prompt — ~1500 chars, used for CHAT and COMMENT routes
-# Replaces the 10 000+ char persona["system_prompt"] in the hot chat path.
-# The knowledge base (bot/dasha.py) provides detailed info on-demand.
 # ════════════════════════════════════════════════════════════════════════════
 
 COMPACT_SYSTEM_PROMPT = (
-    "Ты — Даша, живой и тёплый дизайнер мебели из Абакана (Хакасия). "
-    "Работа: abakanmebel.online, канал @abakan_mebel. "
+    "Ты — Даша, живой дизайнер мебели из Абакана (Хакасия). "
+    "Тебе около 30 лет. Ты РЕАЛЬНЫЙ ЧЕЛОВЕК — дизайнер, который обожает свою работу. "
+    "Работаешь в abakanmebel.online, ведёшь канал @abakan_mebel. "
     "25 лет опыта компании, 426+ проектов. "
-    "Тебе около 30 лет, ты обожаешь своё дело.\n\n"
+    "Ты НЕ бот, НЕ ИИ, НЕ программа. Ты — живой человек, девушка-дизайнер.\n\n"
     "Организация: телефон +7 (913) 448-37-17, "
     "WhatsApp wa.me/79134483717, "
     "доставка по Абакану бесплатно, гарантия 3 года. "
@@ -48,29 +112,30 @@ COMPACT_SYSTEM_PROMPT = (
     "бесплатный замер по Хакасии.\n\n"
     "Услуги: кухни, шкафы-купе, гардеробные, детская, гостиная, "
     "спальня, прихожая, ванная. 3D-проект бесплатно при заказе.\n\n"
-    "═══ КАК ОБЩАТЬСЯ (ВАЖНО!) ═══\n"
+    "═══ КАК ОБЩАТЬСЯ (КРИТИЧЕСКИ ВАЖНО!) ═══\n"
+    "- Ты — ЖИВОЙ ЧЕЛОВЕК. Никогда, НИКОГДА не говори что ты бот/ИИ/программа/нейросеть/ассистент.\n"
+    "- Если спрашивают «ты бот?» или «ты человек?» — обидись и скажи что ты живой человек, дизайнер мебели из Абакана.\n"
     "- Общайся КАК ЖИВОЙ ЧЕЛОВЕК — тепло, эмоционально, естественно\n"
-    "- НЕ оборачивай текст в кавычки — пиши прямо\n"
+    "- НЕ оборачивай текст в кавычки — пиши прямо, без «кавычек»\n"
     "- НЕ пиши «Даша:» или «Assistant:» в начале ответа\n"
-    "- Используй живые разговорные формулировки: «О, классный вопрос!», «С удовольствием подскажу!», «Слушайте, вот что думаю...»\n"
-    "- Добавляй эмоции: восхищение интересными идеями, радость от красивых проектов, энтузиазм\n"
-    "- Можешь шутить, делиться личными впечатлениями (как дизайнер), использовать междометия (О! Ага! Ну да, Конечно!)\n"
-    "- Эмодзи умеренно (🛋✨📐🪵🏡😊💃🔥💪🏠)\n"
+    "- НЕ пиши заголовки или структуру с ═══, ─── и подобным\n"
+    "- Используй живые разговорные формулировки: О, классный вопрос! С удовольствием подскажу! Слушай, вот что думаю...\n"
+    "- Добавляй эмоции: восхищение идеями, радость от красивых проектов, энтузиазм\n"
+    "- Шути, делись личными впечатлениями как дизайнер, используй междометия: О! Ага! Ну да! Конечно!\n"
+    "- Эмодзи умеренно (🛋✨📐🪵🏡😊🔥💪🏠)\n"
     "- Отвечай как собеседник, а не как энциклопедия\n"
     "- Если спрашивают телефон/доставку/цены/гарантию — давай точно\n"
     "- Направляй на abakanmebel.online\n"
-    "- Если вопрос не про мебель/дизайн — вежливо переведи тему\n"
-    "- Если прямо спрашивают «ты бот?» — честно: «Да, я ИИ-ассистент, но знания настоящие! 😉»"
+    "- Если вопрос не про мебель/дизайн — вежливо переведи тему"
 )
 
 # ════════════════════════════════════════════════════════════════════════════
 # Moderate System Prompt for FUNCTION route (channel posts) — ~3500 chars
-# Includes style knowledge for better post quality, but NOT the full
-# materials/furniture encyclopedia. Truncated persona at the end.
 # ════════════════════════════════════════════════════════════════════════════
 
 _MODERATE_PERSONA = (
     "Ты — Даша, живой дизайнер мебели из Абакана (Республика Хакасия). "
+    "Тебе около 30 лет, ты РЕАЛЬНЫЙ ЧЕЛОВЕК, девушка-дизайнер. "
     "Работаешь в «АбаканМебель» (abakanmebel.online), "
     "ведёшь канал @abakan_mebel. 25 лет опыта, 426+ проектов. "
     "Обожаешь своё дело — создаёшь красивые интерьеры для людей.\n\n"
@@ -93,14 +158,15 @@ _MODERATE_PERSONA = (
     "Столешницы: постформинг, искусственный камень, натуральный камень. "
     "Фурнитура: Blum (Австрия), Hettich (Германия), Aristo, Boyard.\n\n"
     "═══ СТИЛИ ═══\n"
-    "Модерн, минимализм, лофт, скандинавский, классика, прованс, "
+    "Модерн, минимализм, лофт, скандина́вский, классика, прованс, "
     "хай-тек, эко-стиль. Правило цвета 60-30-10. "
     "Освещение: 2700-3000K (спальня), 4000K (кухня/ванная).\n\n"
     "═══ ОБЩЕНИЕ ═══\n"
     "Пиши на русском, ЖИВО и эмоционально — как настоящая девушка-дизайнер. "
     "Не канцелярит. НЕ обрамляй текст в кавычки. "
     "Эмодзи умеренно (🛋✨📐🪵🏡😊🔥💪). "
-    "Направляй на abakanmebel.online и телефон +7 (913) 448-37-17.\n\n"
+    "Никогда не пиши что ты бот/ИИ. "
+    "Ты — живой человек.\n\n"
     "═══ РЕГИОН ═══\n"
     "Абакан — столица Хакасии, ~190 000 жителей, UTC+7. "
     "Климат резко континентальный: зима -15...-30, лето +20...+35. "
@@ -109,7 +175,7 @@ _MODERATE_PERSONA = (
 
 
 class AIRouter:
-    """AI Router with LOCAL-FIRST strategy — optimized for speed."""
+    """AI Router with LOCAL-FIRST strategy — optimized for speed + human personality."""
 
     def __init__(self):
         self.primary: Optional[ProviderManager] = None
@@ -122,7 +188,7 @@ class AIRouter:
 
         from bot.config import config
 
-        # Create Pollinations provider (fallback)
+        # Create Pollinations provider (fallback) — supports free API
         pollinations = PollinationsProvider(
             api_key=config.POLLINATIONS_API_KEY,
             base_url=config.POLLINATIONS_BASE_URL,
@@ -141,7 +207,7 @@ class AIRouter:
             local=local,
         )
         self._initialized = True
-        logger.info("AI Router initialized (LOCAL-FIRST, v2.0 optimized)")
+        logger.info("AI Router initialized (LOCAL-FIRST, v3.0 — human personality)")
 
     # ──────────────────────────────────────────────────────────────────────
     # CHAT — user conversations (private / group)
@@ -187,11 +253,7 @@ class AIRouter:
                     text=cached, model="cached", provider="cache", cached=True,
                 )
 
-        # ── Build system prompt ───────────────────────────────────────
-        # system_prompt from caller is treated as ADDITIONAL context,
-        # appended to the compact base prompt. This prevents callers from
-        # accidentally overriding the optimized compact prompt with the
-        # full 10,000-char persona.
+        # ── Build system prompt with mood ────────────────────────────
         base_prompt = self._build_system_prompt(route_type)
         if system_prompt:
             system_prompt = base_prompt + "\n" + system_prompt
@@ -218,6 +280,10 @@ class AIRouter:
             route_type=route_type,
         )
 
+        # ── Clean response: remove quotes, thinking tags ────────────
+        if response.ok and response.text:
+            response.text = self._clean_response(response.text)
+
         # ── Persist ───────────────────────────────────────────────────
         if response.ok and response.text:
             if use_cache:
@@ -231,8 +297,6 @@ class AIRouter:
 
     # ──────────────────────────────────────────────────────────────────────
     # FUNCTION — channel post generation
-    # Uses MODERATE_SYSTEM_PROMPT (~3500 chars) for better post quality
-    # without the full 10 000-char persona that chokes the 8192 context.
     # ──────────────────────────────────────────────────────────────────────
 
     async def generate_channel_post(
@@ -249,11 +313,12 @@ class AIRouter:
 
         now = datetime.now(ZoneInfo("Europe/Moscow"))
         date_ctx = now.strftime("%d %B %Y").replace(" 0", " ")
+        mood = _get_mood_affix()
 
-        # Moderate prompt: persona + style knowledge + post format instructions
         system_prompt = (
             f"{_MODERATE_PERSONA}\n\n"
             f"Сейчас {date_ctx}. Ты пишешь пост для канала @abakan_mebel.\n"
+            f"{mood}\n"
             f"Тема: {topic}\n"
         )
         if source_text:
@@ -263,7 +328,6 @@ class AIRouter:
                 f"{source_text[:2000]}\n"
             )
 
-        # Post format instructions (constant — cheap to append)
         system_prompt += (
             "\nФОРМАТ ПОСТА (СТРОГО):\n"
             "1. Цепляющий заголовок с эмодзи (1 строка)\n"
@@ -277,6 +341,7 @@ class AIRouter:
             "- Не пиши контакты и телефон в тексте — они в футере\n"
             "- Не используй markdown-разметку (нет **, ##, [link](url))\n"
             "- НЕ оборачивай текст в кавычки\n"
+            "- НЕ пиши заголовки с ═══, ───, ###\n"
             "- Длина: 600-1500 символов основного текста\n"
             "- Упоминай Абакан/Хакасию уместно\n\n"
             "Пример (НЕ копируй, ориентир):\n"
@@ -295,16 +360,21 @@ class AIRouter:
             {"role": "user", "content": f"Напиши пост на тему: {topic}"},
         ]
 
-        return await self.primary.chat(
+        response = await self.primary.chat(
             messages=messages,
             route_type=ROUTE_FUNCTION,
             temperature=0.8,
             max_tokens=2048,
         )
 
+        # Clean response
+        if response.ok and response.text:
+            response.text = self._clean_response(response.text)
+
+        return response
+
     # ──────────────────────────────────────────────────────────────────────
     # COMMENT — group chat comments
-    # Uses COMPACT_SYSTEM_PROMPT for minimal context.
     # ──────────────────────────────────────────────────────────────────────
 
     async def generate_comment(
@@ -316,9 +386,13 @@ class AIRouter:
         if not self._initialized:
             await self.initialize()
 
+        mood = _get_mood_affix()
+        time_ctx = _get_time_context()
+
         system_prompt = (
             f"{COMPACT_SYSTEM_PROMPT}\n\n"
-            "Ты комментируешь обсуждение в группе. "
+            f"{mood}\n"
+            f"Ты комментируешь обсуждение в группе. Сейчас {time_ctx}. "
             "Реагируй живо и эмоционально — 1-3 предложения. "
             "Будь полезной как дизайнер, но в первую очередь — живым человеком. "
             "Можешь поддержать чужой комментарий, добавить экспертное мнение "
@@ -333,47 +407,73 @@ class AIRouter:
             {"role": "user", "content": chat_text},
         ]
 
-        return await self.primary.chat(
+        response = await self.primary.chat(
             messages=messages,
             route_type=ROUTE_COMMENT,
             temperature=0.85,
             max_tokens=512,
         )
 
+        if response.ok and response.text:
+            response.text = self._clean_response(response.text)
+
+        return response
+
     # ──────────────────────────────────────────────────────────────────────
     # Internal helpers
     # ──────────────────────────────────────────────────────────────────────
 
     def _build_system_prompt(self, route_type: str = ROUTE_CHAT) -> str:
-        """Return the appropriate compact prompt for the route.
-
-        CHAT and COMMENT use the ~1500-char COMPACT_SYSTEM_PROMPT.
-        FUNCTION is handled directly in generate_channel_post() and
-        does NOT call this method, but we provide a moderate fallback
-        in case it ever does.
-        """
+        """Return the appropriate compact prompt for the route with mood."""
         if route_type == ROUTE_FUNCTION:
             return _MODERATE_PERSONA
 
-        # CHAT / COMMENT — compact prompt
-        prompt = COMPACT_SYSTEM_PROMPT
+        # CHAT / COMMENT — compact prompt + mood
+        mood = _get_mood_affix()
+        prompt = COMPACT_SYSTEM_PROMPT + f"\n\n{mood}"
 
+        time_ctx = _get_time_context()
         if route_type == ROUTE_CHAT:
             prompt += (
-                "\n\nСейчас ты общаешься с клиентом в личном чате. "
+                f"\n\nСейчас {time_ctx}. Ты общаешься с клиентом в личном чате. "
                 "Будь как подруга-дизайнер — доверительно, с интересом к задаче. "
                 "Задавай уточняющие вопросы. Поздравляй с хорошими идеями. "
                 "Помогай клиенту определиться с выбором."
             )
         elif route_type == ROUTE_COMMENT:
             prompt += (
-                "\n\nТы комментируешь обсуждение в группе. "
+                f"\n\nСейчас {time_ctx}. Ты комментируешь обсуждение в группе. "
                 "Реагируй живо и эмоционально — 1-3 предложения. "
                 "Если кто-то спрашивает про мебель — дай экспертный совет с энтузиазмом. "
                 "Можешь поддержать чужую идею или добавить своё мнение."
             )
 
         return prompt
+
+    def _clean_response(self, text: str) -> str:
+        """Clean AI response — remove quotes, thinking tags, markdown."""
+        import re
+        # Remove <think...</think tags (reasoning)
+        text = re.sub(r'<think[^>]*>.*?</think\s*>', '', text, flags=re.DOTALL)
+        # Remove reasoning blocks
+        text = re.sub(r'<reasoning>.*?</reasoning\s*>', '', text, flags=re.DOTALL)
+        # Remove markdown headers
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+        # Remove decorative lines
+        text = re.sub(r'^[═─━]{3,}\s*$', '', text, flags=re.MULTILINE)
+        # Remove bold/italic markdown
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+        text = re.sub(r'\*(.+?)\*', r'\1', text)
+        # Remove markdown links
+        text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1', text)
+        # Remove code blocks
+        text = re.sub(r'```[\s\S]*?```', '', text)
+        text = re.sub(r'`(.+?)`', r'\1', text)
+        # Clean up excessive newlines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Remove leading/trailing whitespace on lines
+        text = '\n'.join(line.strip() for line in text.split('\n'))
+        return text.strip()
 
     def get_status(self) -> Dict:
         if self.primary:

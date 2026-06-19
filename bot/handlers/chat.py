@@ -159,6 +159,45 @@ def _is_reply_to_bot(message: Message) -> bool:
     return message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot
 
 
+def _is_bot_question(text: str) -> bool:
+    """Проверяет, спрашивает ли пользователь про бота/ИИ."""
+    text_lower = text.lower()
+    bot_keywords = [
+        "ты бот", "вы бот", "ты ботя", "ты искуственн", "ты ии",
+        "ты нейросет", "ты программ", "ты робот", "ты машина",
+        "ты искусствен", "ты автомат", "это бот", "это ии",
+        "ты искусственный интеллект", "ты чат-бот", "ты чатбот",
+        "ты текстовый бот", "вы искусствен", "ты скрипт",
+        "ты гпт", "ты gpt", "ты chatgpt", "ты нейро",
+        "ты симуляци", "ты 语言", "bot?",
+    ]
+    # Must be a question or direct statement
+    if any(kw in text_lower for kw in bot_keywords):
+        return True
+    # Questions like "человек или бот?", "бот или человек?"
+    if re.search(r'бот|и\.?и\.?|робот|нейросет', text_lower) and re.search(r'\?', text):
+        return True
+    return False
+
+
+# ── Reaction emojis for groups ──
+_REACTION_EMOJIS = ["👍", "❤️", "🔥", "✨", "😅", "👏", "🤔", "😊", "💯", "💪"]
+
+
+async def _try_add_reaction(message: Message) -> None:
+    """Try to add a random reaction emoji to a message (groups only)."""
+    if message.chat.type not in ("group", "supergroup"):
+        return
+    # Only react sometimes (30% chance) to not be too aggressive
+    if random.random() > 0.3:
+        return
+    try:
+        emoji = random.choice(_REACTION_EMOJIS)
+        await message.react([emoji])
+    except Exception:
+        pass  # Not all groups allow reactions
+
+
 # ── /start ─────────────────────────────────────────────────────────────────────
 
 @chat_router.message(CommandStart())
@@ -338,6 +377,16 @@ async def handle_text_message(message: Message):
     if not text:
         return
 
+    # ── FAST PATH: "ты бот?" detection — respond IMMEDIATELY ──
+    if _is_bot_question(text):
+        # Respond directly without AI to avoid model accidentally admitting
+        from bot.dasha import DASHA_PHRASES
+        response_text = random.choice(DASHA_PHRASES["not_a_bot"])
+        await add_chat_message(message.from_user.id, "user", text)
+        await add_chat_message(message.from_user.id, "assistant", response_text)
+        await message.answer(response_text)
+        return
+
     # Dedup check — skip if same message was recently processed
     cached_reply = dedup_check(message.from_user.id, text)
     if cached_reply:
@@ -369,6 +418,9 @@ async def handle_text_message(message: Message):
                 should_respond = True
 
         if not should_respond:
+            # Still react to furniture messages even if not responding
+            if _has_furniture_topic(text):
+                await _try_add_reaction(message)
             return  # Игнорируем нерелевантные сообщения
 
         # В группе используем COMMENT route
@@ -469,6 +521,8 @@ async def handle_text_message(message: Message):
             reply = reply[:max_chars - 3] + "…"
             logger.info(f"Truncated response to {max_chars} chars for {chat_type}")
         await message.answer(reply)
+        # Add reaction to original message in groups
+        await _try_add_reaction(message)
     elif response.error and "rate limit" not in str(response.error).lower():
         # Static fallback
         fallback = _get_static_response(text)

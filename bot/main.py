@@ -313,7 +313,7 @@ async def main():
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    logger.info("=== Dasha Bot Starting — LOCAL-ONLY RuadaptQwen3-4B — @asdasha_bot ===")
+    logger.info("=== Dasha Bot Starting — LOCAL-FIRST + FREE POLLINATIONS FALLBACK — @asdasha_bot ===")
     local_status = "enabled" if config.ENABLE_LOCAL_MODEL else "disabled"
     logger.info(
         f"Local model: {local_status}, Channel: {config.CHANNEL_USERNAME}, "

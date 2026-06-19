@@ -4,11 +4,8 @@ Handles news posts, AI-generated content, and proper footer.
 
 РАСПИСАНИЕ: 2 поста в час (интервал 30 минут).
 
-Every post footer includes:
-  - Услуги: дизайн и производство мебели (кухни, шкафы-купе на заказ)
-  - Телефон организации: +7 (913) 448-37-17
-  - Сайт: abakanmebel.online
-  - Подпись: Автор @asdasha_bot
+Every post footer (STRICT):
+  Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
 """
 
 import logging
@@ -35,11 +32,8 @@ from ai.router import ai_router
 logger = logging.getLogger("dasha.channel")
 
 # Post footer — attached to EVERY channel post
-POST_FOOTER_TEMPLATE = """
-━━━━━━━━━━━━━━
-Кухни на заказ 📞 {phone}
-🌐 abakanmebel.online
-━━━━━━━━━━━━━━"""
+# Строго: Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
+POST_FOOTER = "Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online"
 
 # Max characters: 4096 without media, 1024 with media (Telegram limits)
 TELEGRAM_TEXT_LIMIT = 4096
@@ -47,11 +41,8 @@ TELEGRAM_MEDIA_TEXT_LIMIT = 1024
 
 
 def _build_footer() -> str:
-    """Build the standard post footer with phone from config."""
-    phone = getattr(config, "PHONE", "")
-    if not phone:
-        phone = "+7 (913) 448-37-17"
-    return POST_FOOTER_TEMPLATE.format(phone=phone)
+    """Build the standard post footer — fixed text."""
+    return POST_FOOTER
 
 
 def _truncate_for_channel(text: str, has_media: bool = False) -> str:

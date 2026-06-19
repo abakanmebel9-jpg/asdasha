@@ -99,7 +99,7 @@ async def handle_inline_query(inline_query: InlineQuery):
             reply_text = reply_text[:3997] + "..."
 
         # Add footer with contact info
-        footer = f"\n\n━━━━━━━━━━━━━━\nКухни на заказ 📞 +7 (913) 448-37-17\n🌐 abakanmebel.online"
+        footer = "\n\nКухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online"
         reply_text += footer
 
         main_id = hashlib.md5(f"main_{query}".encode()).hexdigest()[:16]
