@@ -1,19 +1,32 @@
-name: Dasha Bot — LOCAL-ONLY v1.1 — Даша Дизайнер Мебели
+name: Dasha Bot — MULTI-PROVIDER v4.0 — Даша Дизайнер Мебели
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Dasha Bot v1.1 — LOCAL-ONLY RuadaptQwen3-4B
+# Dasha Bot v4.0 — MULTI-PROVIDER FALLBACK
 #
-#   - LOCAL MODEL ONLY: RuadaptQwen3-4B-Instruct Q4_K_M (~2.5GB GGUF, CPU)
-#   - Russian-optimized tokenizer
-#   - Pollinations AI — аварийный fallback (только если модель недоступна)
-#   - Model caching via actions/cache@v4
-#   - HF_TOKEN for authenticated HuggingFace download
+#   FAILOVER CHAIN:
+#     Local (RuadaptQwen3-4B) → GitHub Models → Groq → Gemini →
+#     OpenRouter → Cerebras → Pollinations (no key needed)
+#
+#   - LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (~2.5GB GGUF, CPU)
+#   - 6 CLOUD PROVIDERS: all free, all OpenAI-compatible
+#   - Pollinations: always available as last resort (no API key needed)
 #   - libopenblas-dev for fast CPU inference
 #
-# Schedule (UTC, Krasnoyarsk = UTC+7, Moscow = UTC+3):
-#   Every 5 hours: 00:00, 05:00, 10:00, 15:00, 20:00
+# SECRETS NEEDED (add in GitHub repo Settings → Secrets):
+#   BOT_TOKEN          — Telegram bot token (from @BotFather)
+#   OWNER_ID           — Telegram owner ID
+#   CHANNEL_ID         — Channel ID (-100...)
+#   CHANNEL_USERNAME    — @abakan_mebel
+#   PHONE              — +7 (913) 448-37-17
+#   HF_TOKEN           — HuggingFace token (for model download)
+#   GH_PAT_TOKEN       — GitHub PAT with models:read scope (for GitHub Models + self-dispatch)
 #
-# CHANNEL POSTING: 2 posts per hour (interval 30 min)
+# OPTIONAL SECRETS (free API keys for cloud providers):
+#   GROQ_API_KEY       — console.groq.com (free, ultra-fast Llama-3.3-70B)
+#   GEMINI_API_KEY     — aistudio.google.com (free, Gemini-2.0-Flash)
+#   OPENROUTER_API_KEY — openrouter.ai (free, 20+ models)
+#   CEREBRAS_API_KEY   — cloud.cerebras.ai (free, ultra-fast Llama-3.3-70B)
+#   POLLINATIONS_API_KEY — enter.pollinations.ai (optional, free tier works without key)
 # ═══════════════════════════════════════════════════════════════════════════
 
 on:
@@ -196,12 +209,9 @@ jobs:
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           CHANNEL_USERNAME: ${{ secrets.CHANNEL_USERNAME }}
           PHONE: ${{ secrets.PHONE }}
-          # Pollinations AI — fallback
-          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
-          # GitHub PAT for self-dispatch
-          GH_PAT_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
-          GH_REPO: abakanmebel9-jpg/asdasha
-          # Local model
+
+          # ── AI PROVIDERS (v4.0 — MULTI-PROVIDER FALLBACK) ──
+          # Primary: Local model
           ENABLE_LOCAL_MODEL: ${{ env.ENABLE_LOCAL_MODEL || 'true' }}
           MODEL_PATH: "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf"
           MODEL_N_CTX: "8192"
@@ -209,23 +219,53 @@ jobs:
           MODEL_HISTORY_LIMIT: "6"
           MODEL_AUTO_DOWNLOAD: "true"
           MODEL_MAX_TOKENS: "2048"
+
+          # Cloud providers — all FREE, configured via secrets
+          # 1. GitHub Models (PAT with models:read scope — GPT-4o-mini)
+          GH_PAT_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          GH_REPO: abakanmebel9-jpg/asdasha
+          # 2. Groq (ultra-fast Llama-3.3-70B, ~1s response)
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # 3. Google Gemini (Gemini-2.0-Flash)
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # 4. OpenRouter (20+ free models)
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # 5. Cerebras (ultra-fast Llama-3.3-70B, ~0.3s)
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          # 6. Pollinations (no key needed — always available last resort)
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+          POLLINATIONS_BASE_URL: "https://gen.pollinations.ai"
+
+          # HuggingFace — for model download
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
           # Database
           DB_PATH: data/dasha_bot.db
           LOG_LEVEL: INFO
+
           # Schedule settings — 2 posts per hour (interval 30 min)
           NEWS_INTERVAL_MINUTES: "30"
           CHANNEL_POST_INTERVAL_MINUTES: "30"
           HOURLY_POST_LIMIT: "2"
           DAILY_POST_LIMIT: "48"
         run: |
-          echo "=== Starting Dasha Bot v1.1 — LOCAL-ONLY ==="
-          echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY, ONLY)"
-          echo "CLOUD: Pollinations (аварийный fallback только)"
+          echo "=== Starting Dasha Bot v4.0 — MULTI-PROVIDER FALLBACK ==="
+          echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY)"
+          echo "CLOUD FALLBACK: GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations"
           echo "CHANNEL: @abakan_mebel (2 posts/hour, every 30 min)"
-          echo "NEWS: furniture-news.json from abakanmebel9-jpg/par"
-          echo "PHONE: +7 (913) 448-37-17"
+          echo "FOOTER: Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online"
           echo "=== Launching bot with UNLIMITED auto-restart ==="
+
+          # Show configured providers
+          echo ""
+          echo "Configured providers:"
+          [ -n "$GH_PAT_TOKEN" ] && echo "  ✅ GitHub Models (GPT-4o-mini)" || echo "  ⏭️  GitHub Models (no PAT)"
+          [ -n "$GROQ_API_KEY" ] && echo "  ✅ Groq (Llama-3.3-70B, ultra-fast)" || echo "  ⏭️  Groq (no key)"
+          [ -n "$GEMINI_API_KEY" ] && echo "  ✅ Gemini (2.0-Flash)" || echo "  ⏭️  Gemini (no key)"
+          [ -n "$OPENROUTER_API_KEY" ] && echo "  ✅ OpenRouter (20+ models)" || echo "  ⏭️  OpenRouter (no key)"
+          [ -n "$CEREBRAS_API_KEY" ] && echo "  ✅ Cerebras (ultra-fast)" || echo "  ⏭️  Cerebras (no key)"
+          echo "  ✅ Pollinations (always available, no key)"
+          echo ""
 
           RETRY=0
           while true; do

@@ -313,10 +313,28 @@ async def main():
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    logger.info("=== Dasha Bot Starting — LOCAL-FIRST + FREE POLLINATIONS FALLBACK — @asdasha_bot ===")
+    logger.info("=== Dasha Bot Starting — MULTI-PROVIDER FALLBACK v4.0 — @asdasha_bot ===")
     local_status = "enabled" if config.ENABLE_LOCAL_MODEL else "disabled"
+
+    # Log configured cloud providers
+    cloud_providers = []
+    if config.GH_PAT_TOKEN:
+        cloud_providers.append("GitHub Models")
+    if config.GROQ_API_KEY:
+        cloud_providers.append("Groq")
+    if config.GEMINI_API_KEY:
+        cloud_providers.append("Gemini")
+    if config.OPENROUTER_API_KEY:
+        cloud_providers.append("OpenRouter")
+    if config.CEREBRAS_API_KEY:
+        cloud_providers.append("Cerebras")
+    cloud_providers.append("Pollinations (always)")
+
     logger.info(
-        f"Local model: {local_status}, Channel: {config.CHANNEL_USERNAME}, "
+        f"Chain: Local({local_status}) → {' → '.join(cloud_providers)}"
+    )
+    logger.info(
+        f"Channel: {config.CHANNEL_USERNAME}, "
         f"Schedule: 2 posts/hour (every {config.CHANNEL_POST_INTERVAL_MINUTES}min), "
         f"Phone: {config.PHONE}"
     )

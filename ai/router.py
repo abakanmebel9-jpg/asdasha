@@ -1,24 +1,25 @@
-"""AI Router v3.0 — OPTIMIZED for speed + HUMAN-LIKE personality (Dasha Bot).
+"""AI Router v4.0 — MULTI-PROVIDER FALLBACK + HUMAN-LIKE personality (Dasha Bot).
 
-Key optimizations vs v2:
-- Compact system prompts (~1500 chars for chat, ~3500 for posts)
-- Chat history limit from config (default 6, not 20)
-- Dedup cache (bot.optimizations) before every AI call
-- Smart knowledge injection with truncation
+v4.0 UPDATES:
+- Multi-provider fallback: Local → GitHub Models → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+- All providers are OpenAI-compatible (except local llama-cpp)
+- Automatic provider discovery — only configured providers (with API keys) are used
+- Response cleaning improved — handles thinking tags, markdown, decorative chars
 
-PERSONALITY UPGRADES v3.0:
+FALLBACK CHAIN:
+  1. LOCAL:      RuadaptQwen3-4B (primary, no internet)
+  2. GITHUB:     GPT-4o-mini via PAT (free, best Russian quality)
+  3. GROQ:       Llama-3.3-70B (free, ULTRA FAST ~1s)
+  4. GEMINI:     Gemini-2.0-Flash (free, excellent Russian)
+  5. OPENROUTER: Llama-3.3-70B:free (free, many models)
+  6. CEREBRAS:   Llama-3.3-70B (free, ultra-fast ~0.3s)
+  7. POLLINATIONS: gpt-oss-20b (FREE, NO KEY NEEDED, always available)
+
+PERSONALITY:
 - Даша — живой человек, НЕ бот. Никогда не признаёт что она ИИ.
 - Настроение: варьируется по времени суток и контексту
 - Референсы на личный опыт как дизайнера
 - Естественные разговорные паттерны, междометия, живой язык
-- Контекстно-зависимый объём ответов
-
-FAILOVER: Local Model (RuadaptQwen3-4B) → Pollinations Free → Pollinations Auth → Static
-
-Routes:
-  CHAT: user conversations in private/group chat
-  COMMENT: comments in groups
-  FUNCTION: channel post generation, consultations
 """
 
 import hashlib
@@ -31,6 +32,11 @@ from zoneinfo import ZoneInfo
 from ai.providers.base import BaseAIProvider, AIResponse
 from ai.providers.local_provider import LocalProvider
 from ai.providers.pollinations_provider import PollinationsProvider
+from ai.providers.github_provider import GitHubModelsProvider
+from ai.providers.groq_provider import GroqProvider
+from ai.providers.gemini_provider import GeminiProvider
+from ai.providers.openrouter_provider import OpenRouterProvider
+from ai.providers.cerebras_provider import CerebrasProvider
 from ai.providers.provider_manager import (
     ProviderManager, ROUTE_CHAT, ROUTE_COMMENT, ROUTE_FUNCTION,
 )
@@ -175,39 +181,93 @@ _MODERATE_PERSONA = (
 
 
 class AIRouter:
-    """AI Router with LOCAL-FIRST strategy — optimized for speed + human personality."""
+    """AI Router with LOCAL-FIRST + MULTI-PROVIDER FALLBACK strategy."""
 
     def __init__(self):
         self.primary: Optional[ProviderManager] = None
         self._initialized = False
 
     async def initialize(self) -> None:
-        """Initialize AI providers."""
+        """Initialize AI providers — creates all configured providers."""
         if self._initialized:
             return
 
         from bot.config import config
 
-        # Create Pollinations provider (fallback) — supports free API
+        # ── Create ALL providers ──
+        providers = []
+
+        # 1. Local provider (primary)
+        local = None
+        if config.ENABLE_LOCAL_MODEL:
+            try:
+                local = LocalProvider()
+                providers.append(("local", local))
+                logger.info(f"Local model configured: {config.MODEL_PATH}")
+            except Exception as e:
+                logger.warning(f"Local model init failed: {e}")
+
+        # 2. GitHub Models (free via PAT)
+        github = None
+        if config.GH_PAT_TOKEN:
+            github = GitHubModelsProvider(api_key=config.GH_PAT_TOKEN)
+            providers.append(("github", github))
+            logger.info("GitHub Models provider configured (PAT)")
+
+        # 3. Groq (free, ultra-fast)
+        groq = None
+        if config.GROQ_API_KEY:
+            groq = GroqProvider(api_key=config.GROQ_API_KEY)
+            providers.append(("groq", groq))
+            logger.info("Groq provider configured (API key)")
+
+        # 4. Google Gemini (free)
+        gemini = None
+        if config.GEMINI_API_KEY:
+            gemini = GeminiProvider(api_key=config.GEMINI_API_KEY)
+            providers.append(("gemini", gemini))
+            logger.info("Gemini provider configured (API key)")
+
+        # 5. OpenRouter (free, many models)
+        openrouter = None
+        if config.OPENROUTER_API_KEY:
+            openrouter = OpenRouterProvider(api_key=config.OPENROUTER_API_KEY)
+            providers.append(("openrouter", openrouter))
+            logger.info("OpenRouter provider configured (API key)")
+
+        # 6. Cerebras (free, ultra-fast)
+        cerebras = None
+        if config.CEREBRAS_API_KEY:
+            cerebras = CerebrasProvider(api_key=config.CEREBRAS_API_KEY)
+            providers.append(("cerebras", cerebras))
+            logger.info("Cerebras provider configured (API key)")
+
+        # 7. Pollinations (free, NO KEY NEEDED — always available)
         pollinations = PollinationsProvider(
             api_key=config.POLLINATIONS_API_KEY,
             base_url=config.POLLINATIONS_BASE_URL,
         )
+        providers.append(("pollinations", pollinations))
+        logger.info("Pollinations provider configured (free fallback, no key needed)")
 
-        # Create Local provider (primary)
-        local = None
-        if config.ENABLE_LOCAL_MODEL:
-            local = LocalProvider()
-            logger.info(f"Local model configured: {config.MODEL_PATH}")
-        else:
-            logger.info("Local model DISABLED, using cloud only")
+        # ── Log available providers ──
+        available = [name for name, p in providers if p]
+        logger.info(
+            f"AI Router v4.0 initialized — "
+            f"providers: {' → '.join(available)}"
+        )
 
+        # ── Create Provider Manager ──
         self.primary = ProviderManager(
             pollinations=pollinations,
             local=local,
+            github=github,
+            groq=groq,
+            gemini=gemini,
+            openrouter=openrouter,
+            cerebras=cerebras,
         )
         self._initialized = True
-        logger.info("AI Router initialized (LOCAL-FIRST, v3.0 — human personality)")
 
     # ──────────────────────────────────────────────────────────────────────
     # CHAT — user conversations (private / group)
@@ -272,7 +332,7 @@ class AIRouter:
             user_message=message,
         )
 
-        # ── Get response ──────────────────────────────────────────────
+        # ── Get response from provider chain ─────────────────────────
         response = await self.primary.chat(
             messages=messages,
             temperature=temperature,
@@ -469,6 +529,12 @@ class AIRouter:
         # Remove code blocks
         text = re.sub(r'```[\s\S]*?```', '', text)
         text = re.sub(r'`(.+?)`', r'\1', text)
+        # Remove surrounding quotes
+        text = text.strip()
+        if text.startswith('"') and text.endswith('"'):
+            text = text[1:-1]
+        if text.startswith('«') and text.endswith('»'):
+            text = text[1:-1]
         # Clean up excessive newlines
         text = re.sub(r'\n{3,}', '\n\n', text)
         # Remove leading/trailing whitespace on lines

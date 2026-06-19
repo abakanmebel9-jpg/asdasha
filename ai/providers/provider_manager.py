@@ -1,23 +1,36 @@
-"""Provider Manager — LOCAL-ONLY for Dasha Bot.
+"""Provider Manager v4.0 — MULTI-PROVIDER FALLBACK for Dasha Bot.
 
-Даша работает ТОЛЬКО на локальной модели RuadaptQwen3-4B-Instruct Q4_K_M.
-Pollinations отключён / используется только как аварийный fallback, когда
-локальная модель физически недоступна (например, файл не скачался).
+COMPLETE FALLBACK CHAIN (tested & integrated):
+  1. LOCAL:      RuadaptQwen3-4B (primary, no internet needed)
+  2. GITHUB:     GitHub Models via PAT (free, GPT-4o-mini)
+  3. GROQ:       Groq free tier (free, ULTRA FAST Llama-3.3-70B)
+  4. GEMINI:     Google Gemini free (free, Gemini-2.0-Flash)
+  5. OPENROUTER: OpenRouter free models (free, 20+ models)
+  6. CEREBRAS:   Cerebras free tier (free, ultra-fast Llama-3.3-70B)
+  7. POLLINATIONS: Pollinations free (NO KEY NEEDED, always available)
 
-ROUTE STRATEGY (по требованию владельца — только локальная модель):
-  CHAT     → Local (Pollinations — крайний fallback)
-  COMMENT  → Local (Pollinations — крайний fallback)
-  FUNCTION → Local (Pollinations — крайний fallback)
+All providers are OpenAI-compatible except local (llama-cpp).
+Each provider is only tried if it has an API key configured.
+Pollinations is always available as absolute last resort.
+
+ROUTE STRATEGY:
+  CHAT     → Local → GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+  COMMENT  → Local → GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+  FUNCTION → Local → GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations
 """
 
 from __future__ import annotations
-import asyncio
 import logging
 from typing import Any, Optional, List, Dict
 
 from .base import AIResponse, BaseAIProvider
 from .local_provider import LocalProvider
 from .pollinations_provider import PollinationsProvider
+from .github_provider import GitHubModelsProvider
+from .groq_provider import GroqProvider
+from .gemini_provider import GeminiProvider
+from .openrouter_provider import OpenRouterProvider
+from .cerebras_provider import CerebrasProvider
 
 logger = logging.getLogger("dasha.ai.provider_manager")
 
@@ -29,19 +42,34 @@ ROUTE_IMAGE = "image"
 
 
 class ProviderManager:
-    """Manages AI providers with LOCAL-FIRST failover."""
+    """Manages AI providers with LOCAL-FIRST multi-provider fallback."""
 
     def __init__(
         self,
         pollinations: PollinationsProvider,
         local: Optional[LocalProvider] = None,
+        github: Optional[GitHubModelsProvider] = None,
+        groq: Optional[GroqProvider] = None,
+        gemini: Optional[GeminiProvider] = None,
+        openrouter: Optional[OpenRouterProvider] = None,
+        cerebras: Optional[CerebrasProvider] = None,
     ) -> None:
         self.pollinations = pollinations
         self.local = local
-        self._local_count = 0
-        self._pollinations_count = 0
+        self.github = github
+        self.groq = groq
+        self.gemini = gemini
+        self.openrouter = openrouter
+        self.cerebras = cerebras
+
+        # Stats
+        self._counts: Dict[str, int] = {}
         self._total_requests = 0
         self._last_provider: str = ""
+
+    def _count(self, name: str) -> None:
+        self._counts[name] = self._counts.get(name, 0) + 1
+        self._last_provider = name
 
     async def chat(
         self,
@@ -54,65 +82,112 @@ class ProviderManager:
     ) -> AIResponse:
         self._total_requests += 1
 
-        # ── ЛОКАЛЬНАЯ МОДЕЛЬ — ПЕРВИЧНАЯ ДЛЯ ВСЕХ РЕЖИМОВ ──
-        # По требованию владельца: Даша работает ТОЛЬКО на локальной
-        # RuadaptQwen3-4B-Instruct Q4_K_M. Pollinations — только аварийный
-        # fallback, если локальная модель физически недоступна.
+        # Build ordered list of providers to try
+        providers = self._build_fallback_chain()
+
+        # ── STEP 1: TRY LOCAL MODEL (always first) ──
         if self.local:
-            try:
-                local_avail = await self.local.is_available()
-            except Exception:
-                local_avail = False
-
-            if local_avail:
-                # Лимиты токенов по типу маршрута
-                if route_type == ROUTE_CHAT:
-                    local_max = min(max_tokens, 2048)
-                elif route_type == ROUTE_COMMENT:
-                    local_max = min(max_tokens, 512)
-                else:  # FUNCTION (посты канала) — больше токенов для длинных постов
-                    local_max = min(max_tokens, 2048)
-
-                try:
-                    result = await self.local.chat(
-                        messages=messages, model="local-qwen3-4b",
-                        temperature=temperature, max_tokens=local_max, **kwargs,
-                    )
-                    if result.ok:
-                        self._last_provider = "local"
-                        self._local_count += 1
-                        return result
-                    else:
-                        logger.warning(
-                            f"Local model returned error (route={route_type}): "
-                            f"{result.error}"
-                        )
-                except Exception as exc:
-                    logger.error(f"Local model exception: {exc}")
-
-        # ── АВАРИЙНЫЙ FALLBACK: Pollinations ──
-        # Срабатывает ТОЛЬКО если локальная модель недоступна
-        # (файл не скачался, ошибка загрузки и т.п.)
-        logger.warning(
-            f"Local model unavailable — using Pollinations fallback "
-            f"(route={route_type}). THIS SHOULD NOT HAPPEN IN NORMAL OPERATION."
-        )
-        try:
-            result = await self.pollinations.chat(
-                messages=messages, model=model,
-                temperature=temperature, max_tokens=max_tokens, **kwargs,
+            result = await self._try_provider(
+                self.local, "local", messages, model="local-qwen3-4b",
+                temperature=temperature, max_tokens=self._local_max(route_type, max_tokens),
+                route_type=route_type, **kwargs,
             )
             if result.ok:
-                self._last_provider = "pollinations"
-                self._pollinations_count += 1
                 return result
-        except Exception as exc:
-            logger.error(f"Pollinations fallback error: {exc}")
 
+        # ── STEP 2-N: TRY CLOUD PROVIDERS IN ORDER ──
+        cloud_providers = providers  # All non-local providers
+        for provider in cloud_providers:
+            result = await self._try_provider(
+                provider, provider.name, messages, model=model,
+                temperature=temperature, max_tokens=max_tokens,
+                route_type=route_type, **kwargs,
+            )
+            if result.ok:
+                return result
+
+        # ── ALL PROVIDERS FAILED ──
+        logger.error("ALL providers failed (Local + %d cloud providers)", len(cloud_providers))
         return AIResponse(
             text="", model=model, provider="none",
-            error="All AI providers failed (Local + Pollinations fallback)",
+            error="All AI providers failed",
         )
+
+    async def _try_provider(
+        self,
+        provider: BaseAIProvider,
+        name: str,
+        messages: List[Dict[str, str]],
+        **kwargs: Any,
+    ) -> AIResponse:
+        """Try a single provider, return result (ok or error)."""
+        try:
+            available = await provider.is_available()
+        except Exception:
+            available = False
+
+        if not available:
+            logger.debug(f"Provider '{name}' not available, skipping")
+            return AIResponse(
+                text="", model="", provider=name,
+                error="Not available",
+            )
+
+        try:
+            result = await provider.chat(messages=messages, **kwargs)
+            if result.ok:
+                self._count(name)
+                logger.info(f"✅ Provider '{name}' succeeded ({result.latency_ms:.0f}ms)")
+                return result
+            else:
+                logger.warning(
+                    f"Provider '{name}' returned error: {result.error}"
+                )
+                return result
+        except Exception as exc:
+            logger.error(f"Provider '{name}' exception: {exc}")
+            return AIResponse(
+                text="", model="", provider=name,
+                error=str(exc),
+            )
+
+    def _build_fallback_chain(self) -> List[BaseAIProvider]:
+        """Build ordered list of cloud providers (with keys configured).
+
+        Order: GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+        Pollinations is always last (no key needed).
+        """
+        chain: List[BaseAIProvider] = []
+
+        if self.github:
+            chain.append(self.github)
+        if self.groq:
+            chain.append(self.groq)
+        if self.gemini:
+            chain.append(self.gemini)
+        if self.openrouter:
+            chain.append(self.openrouter)
+        if self.cerebras:
+            chain.append(self.cerebras)
+
+        # Pollinations — always available, absolute last resort
+        chain.append(self.pollinations)
+
+        logger.debug(
+            f"Cloud fallback chain: "
+            + " → ".join(p.name for p in chain)
+        )
+        return chain
+
+    @staticmethod
+    def _local_max(route_type: str, default_max: int) -> int:
+        """Return max_tokens for local model based on route type."""
+        if route_type == ROUTE_CHAT:
+            return min(default_max, 2048)
+        elif route_type == ROUTE_COMMENT:
+            return min(default_max, 512)
+        else:  # FUNCTION
+            return min(default_max, 2048)
 
     async def generate_image(
         self, prompt: str, width: int = 1024, height: int = 1024,
@@ -123,10 +198,8 @@ class ProviderManager:
             prompt=prompt, width=width, height=height, model=model, **kwargs,
         )
         if result.ok:
-            self._last_provider = "pollinations"
-            return result
-        return AIResponse(text="", model=model, provider="none",
-                          error="Image generation failed")
+            self._count("pollinations-image")
+        return result
 
     async def chat_local_only(
         self,
@@ -135,11 +208,7 @@ class ProviderManager:
         max_tokens: int = 2048,
         **kwargs: Any,
     ) -> AIResponse:
-        """Generate using LOCAL model ONLY — no cloud fallback.
-
-        Useful for channel post generation and other scenarios where
-        we want to guarantee local-only processing (no data leaves the machine).
-        """
+        """Generate using LOCAL model ONLY — no cloud fallback."""
         self._total_requests += 1
 
         if not self.local:
@@ -156,45 +225,50 @@ class ProviderManager:
         if not local_avail:
             return AIResponse(
                 text="", model="local", provider="none",
-                error="Local model not available for local-only generation",
+                error="Local model not available",
             )
 
-        local_max = min(max_tokens, 2048)
         try:
             result = await self.local.chat(
                 messages=messages, model="local-qwen3-4b",
-                temperature=temperature, max_tokens=local_max, **kwargs,
+                temperature=temperature, max_tokens=min(max_tokens, 2048),
+                **kwargs,
             )
             if result.ok:
-                self._last_provider = "local"
-                self._local_count += 1
-                return result
-            else:
-                logger.warning(f"chat_local_only error: {result.error}")
-                return result
+                self._count("local")
+            return result
         except Exception as exc:
             logger.error(f"chat_local_only exception: {exc}")
             return AIResponse(
                 text="", model="local", provider="none",
-                error=f"Local model exception in chat_local_only: {exc}",
+                error=f"Local model exception: {exc}",
             )
 
     def is_available(self) -> bool:
         return True
 
     async def close(self) -> None:
-        await self.pollinations.close()
+        for p in [self.pollinations, self.github, self.groq, self.gemini,
+                   self.openrouter, self.cerebras]:
+            if p:
+                await p.close()
 
     def get_status(self) -> Dict[str, Any]:
-        status = {
+        status: Dict[str, Any] = {
             "total_requests": self._total_requests,
-            "local_count": self._local_count,
-            "pollinations_count": self._pollinations_count,
             "last_provider": self._last_provider,
-            "pollinations": self.pollinations.get_status(),
+            "counts": dict(self._counts),
+            "providers": {},
         }
-        if self.local:
-            status["local"] = self.local.get_status()
-        else:
-            status["local"] = {"status": "not configured"}
+        for name, p in [
+            ("local", self.local),
+            ("github", self.github),
+            ("groq", self.groq),
+            ("gemini", self.gemini),
+            ("openrouter", self.openrouter),
+            ("cerebras", self.cerebras),
+            ("pollinations", self.pollinations),
+        ]:
+            if p:
+                status["providers"][name] = p.get_status()
         return status

@@ -40,16 +40,45 @@ class BotConfig:
     EXPERIENCE_YEARS: int = 25
     PROJECTS_COUNT: int = 426
 
-    # Pollinations AI — cloud fallback
+    # ══════════════════════════════════════════════════════════════════════
+    # AI PROVIDERS — Multi-provider fallback chain
+    # Primary: Local (RuadaptQwen3-4B)
+    # Fallback chain: GitHub Models → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+    # ══════════════════════════════════════════════════════════════════════
+
+    # 1. GitHub Models — FREE via PAT (models.github.ai/inference)
+    #    Получить: github.com/settings/tokens → models:read scope
+    #    Модели: GPT-4o-mini (best Russian), Llama-3.3-70B
+    GH_PAT_TOKEN: str = os.getenv("GH_PAT_TOKEN", "")
+    GH_REPO: str = os.getenv("GH_REPO", "abakanmebel9-jpg/asdasha")
+
+    # 2. Groq — FREE, ULTRA FAST (api.groq.com)
+    #    Получить: console.groq.com → API Keys → Create Key
+    #    Модели: Llama-3.3-70B (0.5-2s response!), Mixtral
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+
+    # 3. Google Gemini — FREE (aistudio.google.com)
+    #    Получить: aistudio.google.com → Get API Key
+    #    Модели: Gemini-2.0-Flash (excellent Russian)
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
+    # 4. OpenRouter — FREE, 20+ models (openrouter.ai)
+    #    Получить: openrouter.ai → Keys → Create Key
+    #    Модели: Llama-3.3-70B:free, Mistral-Small, Qwen-2.5-7B
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+
+    # 5. Cerebras — FREE, ULTRA FAST (cloud.cerebras.ai)
+    #    Получить: cloud.cerebras.ai → API Keys
+    #    Модели: Llama-3.3-70B (0.2-0.5s!)
+    CEREBRAS_API_KEY: str = os.getenv("CEREBRAS_API_KEY", "")
+
+    # 6. Pollinations — FREE, NO KEY NEEDED (text.pollinations.ai)
+    #    Always available as last resort
     POLLINATIONS_API_KEY: str = os.getenv("POLLINATIONS_API_KEY", "")
     POLLINATIONS_BASE_URL: str = os.getenv("POLLINATIONS_BASE_URL", "https://gen.pollinations.ai")
 
-    # HuggingFace — for model download
+    # HuggingFace — for model download only
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
-
-    # GitHub PAT for self-dispatch
-    GH_PAT_TOKEN: str = os.getenv("GH_PAT_TOKEN", "")
-    GH_REPO: str = "abakanmebel9-jpg/asdasha"
 
     # Local model settings — RuadaptQwen3-4B-Instruct Q4_K_M
     ENABLE_LOCAL_MODEL: bool = os.getenv("ENABLE_LOCAL_MODEL", "true").lower() == "true"
