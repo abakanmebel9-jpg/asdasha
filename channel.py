@@ -31,9 +31,12 @@ from ai.router import ai_router
 
 logger = logging.getLogger("dasha.channel")
 
-# Post footer — attached to EVERY channel post
+# Post footer — attached to EVERY channel post (HTML, clickable)
 # Строго: Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
-POST_FOOTER = "Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online"
+POST_FOOTER = (
+    'Кухни на заказ 📞 <a href="tel:+79134483717">+7 (913) 448-37-17</a> '
+    '🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
+)
 
 # Max characters: 4096 without media, 1024 with media (Telegram limits)
 TELEGRAM_TEXT_LIMIT = 4096

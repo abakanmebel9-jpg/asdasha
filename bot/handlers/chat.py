@@ -255,8 +255,8 @@ async def cmd_start(message: Message):
         f"• Расчётом стоимости и сроков 💰\n"
         f"• Бесплатным замером в Абакане 📏\n\n"
         f"Просто напишите что вас интересует!\n"
-        f"📞 +7 (913) 448-37-17\n"
-        f"🌐 abakanmebel.online"
+        f'📞 <a href="tel:+79134483717">+7 (913) 448-37-17</a>\n'
+        f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
     )
     await message.answer(welcome)
 
@@ -296,8 +296,8 @@ async def cmd_about(message: Message):
         f"по Хакасии. Помогаю подобрать мебель, спроектировать интерьер, "
         f"выбрать материалы и фурнитуру.\n\n"
         f"📌 Веду канал: {config.CHANNEL_USERNAME}\n"
-        f"🌐 Сайт: {config.WEBSITE}\n"
-        f"📞 Телефон: {config.PHONE}\n"
+        f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>\n'
+        f'📞 <a href="tel:+79134483717">{config.PHONE}</a>\n'
         f"📍 Абакан, Республика Хакасия (ул. Гончарная, 10)\n"
         f"🛠 Гарантия: {config.WARRANTY}\n"
         f"🤖 Бот: {config.BOT_USERNAME}"
@@ -311,13 +311,13 @@ async def cmd_about(message: Message):
 async def cmd_phone(message: Message):
     phone = config.PHONE
     text = (
-        f"📞 <b>Телефон компании «АбаканМебель»:</b>\n"
-        f"<b>{phone}</b>\n\n"
-        f"💬 WhatsApp: wa.me/79134483717\n"
-        f"🌐 Сайт: {config.WEBSITE}\n"
-        f"📍 Адрес: {config.ADDRESS}\n"
-        f"🕐 Часы работы: {config.WORKING_HOURS}\n\n"
-        f"Позвоните или напишите — проконсультирую! 😊"
+        f'📞 <b>Телефон компании «АбаканМебель»:</b>\n'
+        f'<b><a href="tel:+79134483717">{phone}</a></b>\n\n'
+        f'💬 <a href="https://wa.me/79134483717">WhatsApp</a>\n'
+        f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>\n'
+        f'📍 Адрес: {config.ADDRESS}\n'
+        f'🕐 Часы работы: {config.WORKING_HOURS}\n\n'
+        f'Позвоните или напишите — проконсультирую! 😊'
     )
     await message.answer(text)
 
@@ -339,9 +339,9 @@ async def cmd_order(message: Message):
         text += f"✅ {adv}\n"
 
     phone = config.PHONE
-    text += f"\n📞 Позвоните: <b>{phone}</b>"
-    text += f"\n🌐 Или напишите на {config.WEBSITE}"
-    text += f"\n💬 WhatsApp: wa.me/79134483717"
+    text += f'\n📞 Позвоните: <b><a href="tel:+79134483717">{phone}</a></b>'
+    text += f'\n🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
+    text += f'\n💬 <a href="https://wa.me/79134483717">WhatsApp</a>'
 
     await message.answer(text)
 
@@ -358,9 +358,9 @@ async def cmd_prices(message: Message):
         "🪑 Детская мебель — от 15 000 руб\n"
         "🏠 Прихожие — от 12 000 руб\n\n"
         "<i>Точная стоимость рассчитывается после бесплатного замера.</i>\n\n"
-        f"📞 {config.PHONE}\n"
-        f"🌐 {config.WEBSITE}\n"
-        f"📍 Бесплатный замер по всей Хакасии"
+        f'📞 <a href="tel:+79134483717">{config.PHONE}</a>\n'
+        f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>\n'
+        f'📍 Бесплатный замер по всей Хакасии'
     )
     await message.answer(text)
 
@@ -375,8 +375,8 @@ async def cmd_delivery(message: Message):
         "✅ По Хакасии (Черногорск, Саяногорск и др.) — по договорённости\n"
         "✅ Профессиональная сборка — включена в стоимость\n"
         "✅ Установка фурнитуры и настройка механизмов\n\n"
-        f"📞 {config.PHONE}\n"
-        f"🌐 {config.WEBSITE}"
+        f'📞 <a href="tel:+79134483717">{config.PHONE}</a>\n'
+        f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
     )
     await message.answer(text)
 
@@ -568,7 +568,7 @@ async def handle_text_message(message: Message):
         await add_chat_message(message.from_user.id, "user", text)
         phone_response = random.choice(DASHA_PHRASES["phone_request"]).format(phone=phone)
         # Add WhatsApp and site info
-        phone_response += "\n\n💬 WhatsApp: wa.me/79134483717\n🌐 abakanmebel.online"
+        phone_response += '\n\n💬 <a href="https://wa.me/79134483717">WhatsApp</a>\n🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
         await message.answer(phone_response[:max_chars])
         await add_chat_message(message.from_user.id, "assistant", phone_response)
         return
@@ -676,7 +676,7 @@ async def handle_photo(message: Message):
             await message.answer(
                 "Спасибо за фото! 📸 Если это ваш интерьер — опишите что хотите изменить, "
                 "и я предложу варианты мебели и дизайна! 😊\n\n"
-                f"📞 {config.PHONE}\n🌐 abakanmebel.online"
+                f'📞 <a href="tel:+79134483717">{config.PHONE}</a>\n🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
             )
         else:
             # В группе — тихая реакция
@@ -703,7 +703,7 @@ async def handle_media(message: Message):
             )
         await message.answer(
             "Классный медиафайл! 😊 Напишите текстом — что вас интересует по мебели или дизайну? "
-            f"Или позвоните: {config.PHONE}"
+            f'Или позвоните: <a href="tel:+79134483717">{config.PHONE}</a>'
         )
         return
 
@@ -749,7 +749,7 @@ async def handle_voice(message: Message):
     if chat_type == "private":
         await message.answer(
             "🎤 Голосовые пока не поддерживаю — напишите текстом, и я с удовольствием помогу! 😊\n\n"
-            f"📞 Или позвоните: {config.PHONE}"
+            f'📞 Или позвоните: <a href="tel:+79134483717">{config.PHONE}</a>'
         )
     else:
         # В группе — тихая реакция, не спамим сообщением про голосовые
@@ -765,7 +765,7 @@ def _get_static_response(text: str) -> Optional[str]:
     # Phone request with known phone
     if detect_phone_request(text) and config.PHONE:
         resp = random.choice(DASHA_PHRASES["phone_request"]).format(phone=config.PHONE)
-        return resp + "\n\n💬 WhatsApp: wa.me/79134483717\n🌐 abakanmebel.online"
+        return resp + '\n\n💬 <a href="https://wa.me/79134483717">WhatsApp</a>\n🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
 
     # About Dasha
     if any(kw in text_lower for kw in ["кто ты", "о себе", "что ты умеешь", "расскажи о себе"]):
@@ -773,8 +773,8 @@ def _get_static_response(text: str) -> Optional[str]:
             "👋 Я Даша — дизайнер мебели из Абакана. Помогаю подобрать мебель, "
             "спроектировать интерьер, выбрать материалы. "
             "Работаю в abakanmebel.online 🏠\n\n"
-            f"📞 {config.PHONE}\n"
-            f"🌐 {config.WEBSITE}"
+            f'📞 <a href="tel:+79134483717">{config.PHONE}</a>\n'
+            f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
         )
 
     # Order process
@@ -786,8 +786,8 @@ def _get_static_response(text: str) -> Optional[str]:
             "3️⃣ 3D-дизайн проекта (2-5 дней)\n"
             "4️⃣ Производство 14-31 день\n"
             "5️⃣ Доставка и сборка\n\n"
-            f"📞 {config.PHONE}\n"
-            f"🌐 {config.WEBSITE}"
+            f'📞 <a href="tel:+79134483717">{config.PHONE}</a>\n'
+            f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
         )
 
     # Greetings
@@ -801,8 +801,8 @@ def _get_static_response(text: str) -> Optional[str]:
             "✅ По Абакану — БЕСПЛАТНО\n"
             "✅ По Хакасии (Черногорск, Саяногорск и др.) — по договорённости\n"
             "✅ Профессиональная сборка включена\n\n"
-            f"📞 {config.PHONE}\n"
-            f"🌐 {config.WEBSITE}"
+            f'📞 <a href="tel:+79134483717">{config.PHONE}</a>\n'
+            f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
         )
 
     # Prices
@@ -813,7 +813,7 @@ def _get_static_response(text: str) -> Optional[str]:
             "🚪 Шкафы-купе — от 25 000 руб\n"
             "🛏 Кровати — от 18 000 руб\n\n"
             "Точная стоимость — после бесплатного замера.\n\n"
-            f"📞 {config.PHONE}\n🌐 {config.WEBSITE}"
+            f'📞 <a href="tel:+79134483717">{config.PHONE}</a>\n🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
         )
 
     return None

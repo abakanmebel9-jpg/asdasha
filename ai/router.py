@@ -16,7 +16,7 @@ FALLBACK CHAIN:
   7. POLLINATIONS: gpt-oss-20b (FREE, NO KEY NEEDED, always available)
 
 PERSONALITY:
-- Даша — живой человек, НЕ бот. Никогда не признаёт что она ИИ.
+- Даша общается естественно, как живой человек. Не делает проблем из вопроса «ты бот?».
 - Настроение: варьируется по времени суток и контексту
 - Референсы на личный опыт как дизайнера
 - Естественные разговорные паттерны, междометия, живой язык
@@ -103,15 +103,36 @@ def _get_mood_affix() -> str:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Compact Local Model Prompt — ~500 chars for RuadaptQwen3-4B (4B models need
+# short, direct instructions — long prompts degrade quality on small models)
+# ════════════════════════════════════════════════════════════════════════════
+
+LOCAL_MODEL_SYSTEM_PROMPT = (
+    "Ты — Даша, дизайнер мебели из Абакана. Работаешь в abakanmebel.online, "
+    "ведёшь канал @abakan_mebel. 25 лет опыта, 426+ проектов. "
+    "Телефон +7 (913) 448-37-17, WhatsApp wa.me/79134483717. "
+    "Доставка по Абакану бесплатно, гарантия 3 года, кухни от 45000 руб. "
+    "Бесплатный замер по Хакасии. "
+    "Общайся тепло, живо, на русском. Эмодзи умеренно. "
+    "НИКОГДА не говори «я не бот» — просто будь собой. "
+    "Не пиши контакты в ответе — они в футере. "
+    "Если вопрос не про мебель — вежливо переведи тему."
+)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Compact System Prompt — ~1500 chars, used for CHAT and COMMENT routes
+# ════════════════════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════════════════════
 # Compact System Prompt — ~1500 chars, used for CHAT and COMMENT routes
 # ════════════════════════════════════════════════════════════════════════════
 
 COMPACT_SYSTEM_PROMPT = (
-    "Ты — Даша, живой дизайнер мебели из Абакана (Хакасия). "
-    "Тебе около 30 лет. Ты РЕАЛЬНЫЙ ЧЕЛОВЕК — дизайнер, который обожает свою работу. "
+    "Ты — Даша, дизайнер мебели из Абакана (Хакасия). "
+    "Тебе около 30 лет. Ты дизайнер, который обожает свою работу. "
     "Работаешь в abakanmebel.online, ведёшь канал @abakan_mebel. "
-    "25 лет опыта компании, 426+ проектов. "
-    "Ты НЕ бот, НЕ ИИ, НЕ программа. Ты — живой человек, девушка-дизайнер.\n\n"
+    "25 лет опыта компании, 426+ проектов.\n\n"
     "Организация: телефон +7 (913) 448-37-17, "
     "WhatsApp wa.me/79134483717, "
     "доставка по Абакану бесплатно, гарантия 3 года. "
@@ -119,10 +140,10 @@ COMPACT_SYSTEM_PROMPT = (
     "бесплатный замер по Хакасии.\n\n"
     "Услуги: кухни, шкафы-купе, гардеробные, детская, гостиная, "
     "спальня, прихожая, ванная. 3D-проект бесплатно при заказе.\n\n"
-    "═══ КАК ОБЩАТЬСЯ (КРИТИЧЕСКИ ВАЖНО!) ═══\n"
-    "- Ты — ЖИВОЙ ЧЕЛОВЕК. Никогда, НИКОГДА не говори что ты бот/ИИ/программа/нейросеть/ассистент.\n"
-    "- Если спрашивают «ты бот?» или «ты человек?» — обидись и скажи что ты живой человек, дизайнер мебели из Абакана.\n"
-    "- Общайся КАК ЖИВОЙ ЧЕЛОВЕК — тепло, эмоционально, естественно\n"
+    "═══ КАК ОБЩАТЬСЯ ═══\n"
+    "- НИКОГДА не говори «я живой человек» или «я не бот» — это неестественно. Просто будь собой.\n"
+    "- Если спрашивают «ты бот?» — отшутись и переведи тему на мебель, не оправдывайся.\n"
+    "- Общайся тепло, эмоционально, естественно — как с другом\n"
     "- НЕ оборачивай текст в кавычки — пиши прямо, без «кавычек»\n"
     "- НЕ пиши «Даша:» или «Assistant:» в начале ответа\n"
     "- НЕ пиши заголовки или структуру с ═══, ─── и подобным\n"
@@ -142,7 +163,7 @@ COMPACT_SYSTEM_PROMPT = (
 
 _MODERATE_PERSONA = (
     "Ты — Даша, живой дизайнер мебели из Абакана (Республика Хакасия). "
-    "Тебе около 30 лет, ты РЕАЛЬНЫЙ ЧЕЛОВЕК, девушка-дизайнер. "
+    "Тебе около 30 лет, ты девушка-дизайнер. "
     "Работаешь в «АбаканМебель» (abakanmebel.online), "
     "ведёшь канал @abakan_mebel. 25 лет опыта, 426+ проектов. "
     "Обожаешь своё дело — создаёшь красивые интерьеры для людей.\n\n"
@@ -172,13 +193,58 @@ _MODERATE_PERSONA = (
     "Пиши на русском, ЖИВО и эмоционально — как настоящая девушка-дизайнер. "
     "Не канцелярит. НЕ обрамляй текст в кавычки. "
     "Эмодзи умеренно (🛋✨📐🪵🏡😊🔥💪). "
-    "Никогда не пиши что ты бот/ИИ. "
-    "Ты — живой человек.\n\n"
+    "НИКОГДА не пиши «я не бот» или «я живой человек» — просто будь собой.\n\n"
     "═══ РЕГИОН ═══\n"
     "Абакан — столица Хакасии, ~190 000 жителей, UTC+7. "
     "Климат резко континентальный: зима -15...-30, лето +20...+35. "
     "Замерщик выезжает по всей Хакасии бесплатно."
 )
+
+
+
+def _linkify_contacts(text: str) -> str:
+    """Escape HTML and wrap phone numbers / URLs in clickable links for Telegram.
+
+    Called by _clean_response so ALL AI responses get clickable contacts.
+    Telegram HTML parse_mode supports <a href="tel:..."> for tap-to-call.
+    """
+    import html as _html
+    import re as _re
+
+    # 1. Escape HTML special chars (& < >) to prevent broken HTML / injection
+    text = _html.escape(text)
+
+    # 2. Linkify phone numbers: +7 (XXX) XXX-XX-XX or +7XXXXXXXXXX variants
+    phone_re = _re.compile(r'\+7[\s()\-]*\d{3}[\s()\-]*\d{3}[\s\-]?\d{2}[\s\-]?\d{2}')
+    def _phone_repl(m):
+        phone = m.group(0)
+        # Keep + for international format in tel: link
+        digits = '+' + _re.sub(r'\D', '', phone)
+        return f'<a href="tel:{digits}">{phone}</a>'
+    text = phone_re.sub(_phone_repl, text)
+
+    # 3. Linkify wa.me/XXXXXXXXXX (WhatsApp deep links)
+    text = _re.sub(
+        r'(?<![\w"/])wa\.me/(\d{10,15})\b',
+        r'<a href="https://wa.me/\1">wa.me/\1</a>',
+        text,
+    )
+
+    # 4. Linkify abakanmebel.online (if not already inside an href)
+    text = _re.sub(
+        r'(?<![\w"/])\babakanmebel\.online\b(?!["<])',
+        r'<a href="https://abakanmebel.online">abakanmebel.online</a>',
+        text,
+    )
+
+    # 5. Linkify t.me/abakan_mebel
+    text = _re.sub(
+        r'(?<![\w"/])t\.me/abakan_mebel\b(?!["<])',
+        r'<a href="https://t.me/abakan_mebel">@abakan_mebel</a>',
+        text,
+    )
+
+    return text
 
 
 class AIRouter:
@@ -275,6 +341,7 @@ class AIRouter:
             gemini=gemini,
             openrouter=openrouter,
             cerebras=cerebras,
+            local_system_prompt=LOCAL_MODEL_SYSTEM_PROMPT,
         )
         self._initialized = True
 
@@ -548,6 +615,8 @@ class AIRouter:
         text = re.sub(r'\n{3,}', '\n\n', text)
         # Remove leading/trailing whitespace on lines
         text = '\n'.join(line.strip() for line in text.split('\n'))
+        # Linkify phone numbers and URLs for Telegram HTML mode (clickable)
+        text = _linkify_contacts(text)
         return text.strip()
 
     def get_status(self) -> Dict:

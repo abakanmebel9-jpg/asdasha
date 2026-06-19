@@ -59,6 +59,7 @@ class ProviderManager:
         gemini: Optional[GeminiProvider] = None,
         openrouter: Optional[OpenRouterProvider] = None,
         cerebras: Optional[CerebrasProvider] = None,
+        local_system_prompt: str = "",
     ) -> None:
         self.pollinations = pollinations
         self.local = local
@@ -68,6 +69,9 @@ class ProviderManager:
         self.gemini = gemini
         self.openrouter = openrouter
         self.cerebras = cerebras
+        # Compact system prompt for the 4B local model (long prompts degrade
+        # quality on small models). Empty = use the full prompt from messages.
+        self.local_system_prompt = local_system_prompt
 
         # Stats
         self._counts: Dict[str, int] = {}
@@ -105,10 +109,13 @@ class ProviderManager:
 
         # ── STEP 1: TRY LOCAL MODEL (only for CHAT/FUNCTION, or if enabled) ──
         if self.local and use_local:
+            # For the 4B local model, use a compact system prompt to improve
+            # quality (long prompts degrade quality on small models).
+            local_messages = self._build_local_messages(messages, route_type)
             # Use shorter max_tokens for comments to speed up local model
             local_max = self._local_max(route_type, max_tokens)
             result = await self._try_provider(
-                self.local, "local", messages, model="local-qwen3-4b",
+                self.local, "local", local_messages, model="local-qwen3-4b",
                 temperature=temperature, max_tokens=local_max,
                 route_type=route_type, **kwargs,
             )
@@ -136,6 +143,31 @@ class ProviderManager:
             text="", model=model, provider="none",
             error="All AI providers failed",
         )
+
+    def _build_local_messages(
+        self, messages: List[Dict[str, str]], route_type: str,
+    ) -> List[Dict[str, str]]:
+        """Build messages with compact system prompt for the 4B local model.
+
+        4B models (RuadaptQwen3-4B) need short, direct instructions — long
+        prompts (1500+ chars) degrade quality and waste context. For CHAT and
+        COMMENT routes, replace the system message with the compact
+        LOCAL_MODEL_SYSTEM_PROMPT (~500 chars). For FUNCTION (channel posts)
+        keep the full prompt since quality matters most there and latency is
+        acceptable (background task).
+        """
+        if not self.local_system_prompt or not messages:
+            return messages
+        if route_type == ROUTE_FUNCTION:
+            return messages  # Keep full prompt for channel post quality
+
+        result = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                result.append({"role": "system", "content": self.local_system_prompt})
+            else:
+                result.append(msg)
+        return result
 
     async def _try_provider(
         self,
