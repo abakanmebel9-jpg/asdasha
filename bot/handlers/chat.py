@@ -58,11 +58,44 @@ def _check_message_rate(user_id: int, min_interval: float = 2.0) -> bool:
     return True
 
 
+# ── Per-chat cooldown for non-priority group messages ─────────────────────────
+# Предотвращает флуд в очень активных чатах: упоминания/replies/мебель обходят
+# cooldown и отвечают всегда. Для остальных — не чаще чем раз в N секунд на чат.
+
+_chat_last_response: dict = {}
+
+
+def _chat_cooldown_active(chat_id: int, is_priority: bool) -> bool:
+    """Вернёт True, если сообщение следует ПРОПУСТИТЬ из-за per-chat cooldown.
+
+    Приоритетные сообщения (упоминания, replies, мебельная тематика) НИКОГДА не
+    пропускаются — на них Даша отвечает всегда.
+    """
+    if is_priority:
+        return False
+    now = time.time()
+    last = _chat_last_response.get(chat_id, 0.0)
+    cooldown = config.GROUP_COOLDOWN_SECONDS
+    if cooldown <= 0:
+        return False
+    if now - last < cooldown:
+        return True  # cooldown активен — пропустить
+    return False
+
+
+def _mark_chat_responded(chat_id: int) -> None:
+    _chat_last_response[chat_id] = time.time()
+
+
 # ── Group trigger detection ───────────────────────────────────────────────────
-# В группах Даша отвечает только когда:
-#   1) Её упомянули (@asdasha_bot или "даша")
-#   2) Сообщение содержит мебельную/дизайнерскую тематику
-#   3) Это reply на её сообщение
+# Даша АКТИВНО участвует во ВСЕХ чатах и группах — отвечает на КАЖДОЕ событие:
+#   1) Упоминания (@asdasha_bot / "даша") — ВСЕГДА развёрнутый ответ
+#   2) Replies на сообщения Даши — ВСЕГДА ответ
+#   3) Мебельная/дизайнерская тематика — ВСЕГДА экспертный комментарий
+#   4) Разговорные фразы (привет, спасибо, класс) — ВСЕГДА живая реакция
+#   5) Любое другое сообщение — ВСЕГДА короткое участие в беседе
+# Per-chat cooldown (#GROUP_COOLDOWN_SECONDS) защищает от флуда в активных чатах,
+# но НЕ применяется к приоритетным сообщениям (1-3).
 
 # Ключевые слова мебельной/дизайнерской тематики для групп
 _FURNITURE_TRIGGER_KEYWORDS = [
@@ -191,8 +224,8 @@ async def _try_add_reaction(message: Message) -> None:
     """Try to add a random reaction emoji to a message (groups only)."""
     if message.chat.type not in ("group", "supergroup"):
         return
-    # Only react sometimes (30% chance) to not be too aggressive
-    if random.random() > 0.3:
+    prob = config.GROUP_REACTION_PROBABILITY
+    if random.random() > prob:
         return
     try:
         emoji = random.choice(_REACTION_EMOJIS)
@@ -360,6 +393,10 @@ async def cmd_clear(message: Message):
 
 @chat_router.message(F.text)
 async def handle_text_message(message: Message):
+    # ── Защита от циклов: игнорировать сообщения от других ботов ──
+    if config.GROUP_IGNORE_BOTS and message.from_user and message.from_user.is_bot:
+        return
+
     # Rate check
     if not _check_message_rate(message.from_user.id):
         return
@@ -400,30 +437,38 @@ async def handle_text_message(message: Message):
     is_mentioned = _is_mentioned(message)
 
     # ═══ GROUP / SUPERGROUP LOGIC ═══
-    # Даша АКТИВНО участвует в обсуждениях во ВСЕХ чатах и группах:
-    #   1) Упоминания (@asdasha_bot / "даша") — ВСЕГДА отвечает развёрнуто
-    #   2) Replies на сообщения Даши — ВСЕГДА отвечает
-    #   3) Мебельная/дизайнерская тематика — ВСЕГДА комментирует как эксперт (70%)
-    #   4) Разговорные фразы (привет, спасибо, класс) — реагирует живо (30%)
-    #   5) Любое другое сообщение — иногда участвует в беседе (15%)
+    # Даша отвечает на ВСЕ события во ВСЕХ чатах и группах (бесплатная реклама,
+    # бот не загружен). Per-chat cooldown защищает от флуда только для
+    # неприоритетных сообщений — упоминания/replies/мебель отвечают ВСЕГДА.
     if chat_type in ("group", "supergroup"):
         is_furniture = _has_furniture_topic(text)
         is_conversational_msg = _is_conversational(text)
+        is_priority = is_mentioned or _is_reply_to_bot(message) or is_furniture
 
-        if is_mentioned or _is_reply_to_bot(message):
-            should_respond = True  # Always respond to mentions and replies
-        elif is_furniture:
-            should_respond = random.random() < 0.70  # 70% — usually comment
-        elif is_conversational_msg:
-            should_respond = random.random() < 0.30  # 30% — sometimes react
+        if config.GROUP_RESPOND_ALL:
+            # Отвечать на КАЖДОЕ событие. Приоритетные — всегда.
+            # Неприоритетные — с per-chat cooldown (защита от флуда в активных чатах).
+            if _chat_cooldown_active(message.chat.id, is_priority):
+                # Cooldown активен — только реакция-эмодзи на мебельные сообщения
+                if is_furniture:
+                    await _try_add_reaction(message)
+                return
+            should_respond = True
         else:
-            should_respond = random.random() < 0.15  # 15% — occasional participation
+            # Старый режим (вероятностный) — на случай если GROUP_RESPOND_ALL=false
+            if is_mentioned or _is_reply_to_bot(message):
+                should_respond = True
+            elif is_furniture:
+                should_respond = random.random() < 0.70
+            elif is_conversational_msg:
+                should_respond = random.random() < 0.30
+            else:
+                should_respond = random.random() < 0.15
 
-        if not should_respond:
-            # Still react to furniture messages even if not responding
-            if _has_furniture_topic(text):
-                await _try_add_reaction(message)
-            return  # Игнорируем нерелевантные сообщения
+            if not should_respond:
+                if is_furniture:
+                    await _try_add_reaction(message)
+                return
 
         # В группе используем COMMENT route
         route_type = "comment"
@@ -546,6 +591,9 @@ async def handle_text_message(message: Message):
             reply = reply[:max_chars - 3] + "…"
             logger.info(f"Truncated response to {max_chars} chars for {chat_type}")
         await message.answer(reply)
+        # Отметить, что Даша ответила в этом чате (для per-chat cooldown)
+        if chat_type in ("group", "supergroup"):
+            _mark_chat_responded(message.chat.id)
         # Add reaction to original message in groups
         await _try_add_reaction(message)
     elif response.error and "rate limit" not in str(response.error).lower():
@@ -553,24 +601,48 @@ async def handle_text_message(message: Message):
         fallback = _get_static_response(text)
         if fallback:
             await message.answer(fallback[:max_chars])
+            if chat_type in ("group", "supergroup"):
+                _mark_chat_responded(message.chat.id)
         else:
             logger.error(f"AI error for user {message.from_user.id}: {response.error}")
-            # Last-resort message
-            await message.answer(
-                "Извините, не смогла обработать запрос прямо сейчас 😔 "
-                f"Позвоните нам: {config.PHONE} или напишите на {config.WEBSITE}"
-            )
+            # Last-resort message — в группе не отправляем (чтобы не спамить)
+            if chat_type == "private":
+                await message.answer(
+                    "Извините, не смогла обработать запрос прямо сейчас 😔 "
+                    f"Позвоните нам: {config.PHONE} или напишите на {config.WEBSITE}"
+                )
+            else:
+                # В группе — тихо реагируем эмодзи, не спамим ошибками
+                await _try_add_reaction(message)
+                _mark_chat_responded(message.chat.id)
 
 
 # ── Photo messages ─────────────────────────────────────────────────────────────
 
 @chat_router.message(F.photo)
 async def handle_photo(message: Message):
-    # In groups, only respond to photos if mentioned or replied to
+    # Защита от ботов
+    if config.GROUP_IGNORE_BOTS and message.from_user and message.from_user.is_bot:
+        return
+
     chat_type = message.chat.type
+    caption = message.caption or ""
+    is_mentioned = _is_mentioned(message)
+    is_reply = _is_reply_to_bot(message)
+    is_furniture = _has_furniture_topic(caption) if caption else False
+
+    # In groups: respond to photos if mentioned, replied, furniture-related caption,
+    # or (when GROUP_RESPOND_ALL) any photo subject to per-chat cooldown.
     if chat_type in ("group", "supergroup"):
-        if not (_is_mentioned(message) or _is_reply_to_bot(message)):
-            return
+        is_priority = is_mentioned or is_reply or is_furniture
+        if config.GROUP_RESPOND_ALL:
+            if _chat_cooldown_active(message.chat.id, is_priority):
+                if is_furniture:
+                    await _try_add_reaction(message)
+                return
+        else:
+            if not is_priority:
+                return
 
     await get_or_create_user(
         user_id=message.from_user.id,
@@ -578,37 +650,110 @@ async def handle_photo(message: Message):
         first_name=message.from_user.first_name or "",
     )
 
-    caption = message.caption or ""
     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
 
-    # For now, respond with text about the photo
-    prompt = f"Пользователь прислал фото. {'Подпись: ' + caption if caption else 'Без подписи.'}"
+    # Build prompt from caption
+    if caption:
+        prompt = f"Пользователь прислал фото с подписью: «{caption}». Отреагируй и помоги."
+    else:
+        prompt = "Пользователь прислал фото без подписи. Отреагируй дружелюбно и спроси, что хотелось бы изменить в интерьере."
 
     response = await ai_router.chat(
         user_id=message.from_user.id,
         message=prompt,
-        route_type="chat",
+        route_type="comment" if chat_type in ("group", "supergroup") else "chat",
     )
 
     if response.ok and response.text:
-        max_chars = adaptive_max_chars(chat_type)
-        await message.answer(response.text.strip()[:max_chars])
+        max_chars = adaptive_max_chars(chat_type) if chat_type != "private" else 4000
+        reply = response.text.strip()[:max_chars]
+        await message.answer(reply)
+        if chat_type in ("group", "supergroup"):
+            _mark_chat_responded(message.chat.id)
+        await _try_add_reaction(message)
     else:
+        if chat_type == "private":
+            await message.answer(
+                "Спасибо за фото! 📸 Если это ваш интерьер — опишите что хотите изменить, "
+                "и я предложу варианты мебели и дизайна! 😊\n\n"
+                f"📞 {config.PHONE}\n🌐 abakanmebel.online"
+            )
+        else:
+            # В группе — тихая реакция
+            await _try_add_reaction(message)
+            _mark_chat_responded(message.chat.id)
+
+
+# ── Stickers / animations / other media ───────────────────────────────────────
+
+@chat_router.message(F.sticker | F.animation | F.video | F.document)
+async def handle_media(message: Message):
+    """Даша реагирует на стикеры, гифки, видео и документы в группах (бесплатная реклама)."""
+    if config.GROUP_IGNORE_BOTS and message.from_user and message.from_user.is_bot:
+        return
+
+    chat_type = message.chat.type
+    if chat_type not in ("group", "supergroup"):
+        # В личке — короткий ответ
+        if message.from_user:
+            await get_or_create_user(
+                user_id=message.from_user.id,
+                username=message.from_user.username or "",
+                first_name=message.from_user.first_name or "",
+            )
         await message.answer(
-            "Спасибо за фото! 📸 Если это ваш интерьер — опишите что хотите изменить, "
-            "и я предложу варианты мебели и дизайна! 😊\n\n"
-            f"📞 {config.PHONE}\n🌐 abakanmebel.online"
+            "Классный медиафайл! 😊 Напишите текстом — что вас интересует по мебели или дизайну? "
+            f"Или позвоните: {config.PHONE}"
         )
+        return
+
+    # В группе — реагируем эмодзи (если позволяет cooldown), иногда комментируем
+    is_mentioned = _is_mentioned(message)
+    is_reply = _is_reply_to_bot(message)
+    is_priority = is_mentioned or is_reply
+
+    if config.GROUP_RESPOND_ALL:
+        if _chat_cooldown_active(message.chat.id, is_priority):
+            await _try_add_reaction(message)
+            return
+    else:
+        if not is_priority:
+            await _try_add_reaction(message)
+            return
+
+    # На стикер/медиа — короткий живой комментарий (30% chance, иначе только реакция)
+    if is_priority or random.random() < 0.30:
+        caption = message.caption or ""
+        media_type = "стикер" if message.sticker else ("гифку" if message.animation else ("видео" if message.video else "документ"))
+        prompt = f"В группе прислали {media_type}. Реагируй коротко и живо (1 предложение)." + (f" Подпись: «{caption}»." if caption else "")
+        response = await ai_router.chat(
+            user_id=message.from_user.id,
+            message=prompt,
+            route_type="comment",
+        )
+        if response.ok and response.text:
+            await message.answer(response.text.strip()[:adaptive_max_chars(chat_type)])
+            _mark_chat_responded(message.chat.id)
+        await _try_add_reaction(message)
+    else:
+        await _try_add_reaction(message)
 
 
 # ── Voice messages ────────────────────────────────────────────────────────────
 
 @chat_router.message(F.voice)
 async def handle_voice(message: Message):
-    await message.answer(
-        "🎤 Голосовые пока не поддерживаю — напишите текстом, и я с удовольствием помогу! 😊\n\n"
-        f"📞 Или позвоните: {config.PHONE}"
-    )
+    if config.GROUP_IGNORE_BOTS and message.from_user and message.from_user.is_bot:
+        return
+    chat_type = message.chat.type
+    if chat_type == "private":
+        await message.answer(
+            "🎤 Голосовые пока не поддерживаю — напишите текстом, и я с удовольствием помогу! 😊\n\n"
+            f"📞 Или позвоните: {config.PHONE}"
+        )
+    else:
+        # В группе — тихая реакция, не спамим сообщением про голосовые
+        await _try_add_reaction(message)
 
 
 # ── Static Fallback Responses ──────────────────────────────────────────────────

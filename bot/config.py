@@ -112,6 +112,20 @@ class BotConfig:
     # Log level
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+    # ════════════════════════════════════════════════════════════════════════
+    # GROUP BEHAVIOR — Даша отвечает на ВСЕ события во ВСЕХ чатах и группах
+    # (бесплатная реклама, бот не загружен)
+    # ════════════════════════════════════════════════════════════════════════
+    # Отвечать на ВСЕ сообщения в группах (True = отвечать на каждое событие)
+    GROUP_RESPOND_ALL: bool = os.getenv("GROUP_RESPOND_ALL", "true").lower() == "true"
+    # Per-chat cooldown (сек) для НЕприоритетных сообщений в группах
+    # (упоминания/replies/мебель обходят cooldown — отвечают всегда)
+    GROUP_COOLDOWN_SECONDS: int = int(os.getenv("GROUP_COOLDOWN_SECONDS", "8"))
+    # Доля реакций-эмодзи на сообщения в группах (0.0-1.0)
+    GROUP_REACTION_PROBABILITY: float = float(os.getenv("GROUP_REACTION_PROBABILITY", "0.35"))
+    # Игнорировать сообщения от других ботов (предотвращает циклы)
+    GROUP_IGNORE_BOTS: bool = os.getenv("GROUP_IGNORE_BOTS", "true").lower() == "true"
+
 
 # Persona system prompt for Dasha
 persona = {

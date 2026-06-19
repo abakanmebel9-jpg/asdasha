@@ -248,6 +248,12 @@ jobs:
           CHANNEL_POST_INTERVAL_MINUTES: "30"
           HOURLY_POST_LIMIT: "2"
           DAILY_POST_LIMIT: "48"
+
+          # Group behavior — Даша отвечает на ВСЕ события во ВСЕХ чатах и группах
+          GROUP_RESPOND_ALL: "true"
+          GROUP_COOLDOWN_SECONDS: "8"
+          GROUP_REACTION_PROBABILITY: "0.35"
+          GROUP_IGNORE_BOTS: "true"
         run: |
           echo "=== Starting Dasha Bot v4.0 — MULTI-PROVIDER FALLBACK ==="
           echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY)"
