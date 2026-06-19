@@ -66,7 +66,7 @@ AUTH_CHAT_MODELS = [
     "deepseek", "deepseek-pro",
     "llama", "llama-maverick", "llama-scout",
     "grok", "grok-large",
-    "claude", "claude-fast", "claude-large", "claude-opus-4.6", "claude-opus-4.7",
+    "claude", "claude-fast", "claude-large",
     "gemini", "gemini-fast", "gemini-3-flash", "gemini-flash-lite-3.1", "gemini-large",
     "qwen-coder", "qwen-coder-large", "qwen-large",
     "polly", "kimi", "kimi-code",

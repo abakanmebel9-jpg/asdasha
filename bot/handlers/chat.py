@@ -169,7 +169,7 @@ def _is_bot_question(text: str) -> bool:
         "ты искусственный интеллект", "ты чат-бот", "ты чатбот",
         "ты текстовый бот", "вы искусствен", "ты скрипт",
         "ты гпт", "ты gpt", "ты chatgpt", "ты нейро",
-        "ты симуляци", "ты 语言", "bot?",
+        "ты симуляци", "ты язык", "bot?",
     ]
     # Must be a question or direct statement
     if any(kw in text_lower for kw in bot_keywords):

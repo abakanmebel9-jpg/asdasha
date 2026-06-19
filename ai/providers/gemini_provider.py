@@ -134,7 +134,7 @@ class GeminiProvider(BaseAIProvider):
         start = time.time()
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
-                url = f"{CHAT_URL}?key={self.api_key}"
+                url = CHAT_URL
                 response = await client.post(url, headers=headers, json=payload)
 
                 if response.status_code == 400:

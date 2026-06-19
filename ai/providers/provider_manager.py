@@ -248,7 +248,7 @@ class ProviderManager:
         return True
 
     async def close(self) -> None:
-        for p in [self.pollinations, self.github, self.groq, self.gemini,
+        for p in [self.local, self.pollinations, self.github, self.groq, self.gemini,
                    self.openrouter, self.cerebras]:
             if p:
                 await p.close()
