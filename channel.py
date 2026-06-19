@@ -35,15 +35,10 @@ from ai.router import ai_router
 logger = logging.getLogger("dasha.channel")
 
 # Post footer — attached to EVERY channel post
-# Услуги организации: дизайн + производство мебели в Абакане
 POST_FOOTER_TEMPLATE = """
 ━━━━━━━━━━━━━━
-🛋 Мебель на заказ в Абакане — дизайн и производство
-✨ Кухни · шкафы-купе · гардеробные · мебель по проекту
-📞 {phone}
+Кухни на заказ 📞 {phone}
 🌐 abakanmebel.online
-🛠 Гарантия 3 года · 25 лет опыта · 426+ проектов
-Автор @asdasha_bot
 ━━━━━━━━━━━━━━"""
 
 # Max characters: 4096 without media, 1024 with media (Telegram limits)

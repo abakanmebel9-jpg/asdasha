@@ -260,10 +260,9 @@ class LocalProvider(BaseAIProvider):
 
             start_time = time.time()
 
-            # n_batch: Smaller = less peak memory, larger = faster prompt processing.
-            # With n_ctx=8192 and RuadaptQwen3-4B Q4_K_M (~2.5GB model):
-            #   - 512 is fine for typical prompts (<1000 tokens)
-            n_batch = 512
+            # n_batch: Larger = faster prompt processing, more peak memory.
+            # 1024 is good balance for Q4_K_M model on VPS.
+            n_batch = 1024
 
             # Ignore SIGINT during model loading (llama-cpp can be slow)
             old_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -684,19 +683,27 @@ class LocalProvider(BaseAIProvider):
         text = text.replace("<|im_start|>", "")
 
         # Remove common AI name prefixes
-        for prefix in ["Даша:", "Даша :", "Dasha:", "Assistant:", "Ответ Даши:"]:
+        for prefix in ["Даша:", "Даша :", "Dasha:", "Assistant:", "Ответ Даши:",
+                        "Даша,", "Dasha,", "ДАША:", "даша:"]:
             if text.startswith(prefix):
                 text = text[len(prefix):].strip()
 
-        # Strip surrounding quotes
-        if text.startswith('"') and text.endswith('"'):
-            text = text[1:-1]
-        if text.startswith("'") and text.endswith("'"):
-            text = text[1:-1]
+        # Strip surrounding quotes (single, double, smart, guillemets)
+        for open_q, close_q in [('"', '"'), ('"', '"'), ('«', '»'),
+                                ('"', '"'), ("'", "'"), ('"', '"')]:
+            if text.startswith(open_q) and text.endswith(close_q) and len(text) > 4:
+                text = text[1:-1].strip()
+
+        # Remove inline quotes wrapping entire first sentence
+        text = re.sub(r'^["«][\s]?(.*?)[\s]?["»]', r'\1', text)
 
         # Strip markdown bold/italic (model sometimes wraps entire response)
         text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
         text = re.sub(r"\*([^*]+)\*", r"\1", text)
+
+        # Remove excessive newline+quote patterns (model quoting its own text)
+        text = re.sub(r'\n[""][^""]*[""]\n', '\n', text)
+        text = re.sub(r'\n["«][^"»]*["»]\n', '\n', text)
 
         # Clean up excessive whitespace
         text = re.sub(r"\n{3,}", "\n\n", text)

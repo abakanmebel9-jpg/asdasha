@@ -54,9 +54,9 @@ class BotConfig:
     # Local model settings — RuadaptQwen3-4B-Instruct Q4_K_M
     ENABLE_LOCAL_MODEL: bool = os.getenv("ENABLE_LOCAL_MODEL", "true").lower() == "true"
     MODEL_PATH: str = os.getenv("MODEL_PATH", "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf")
-    MODEL_N_CTX: int = int(os.getenv("MODEL_N_CTX", "8192"))
-    MODEL_N_THREADS: int = int(os.getenv("MODEL_N_THREADS", "3"))
-    MODEL_MAX_TOKENS: int = int(os.getenv("MODEL_MAX_TOKENS", "2048"))
+    MODEL_N_CTX: int = int(os.getenv("MODEL_N_CTX", "4096"))
+    MODEL_N_THREADS: int = int(os.getenv("MODEL_N_THREADS", "4"))
+    MODEL_MAX_TOKENS: int = int(os.getenv("MODEL_MAX_TOKENS", "1500"))
 
     # Model auto-download settings
     MODEL_AUTO_DOWNLOAD: bool = os.getenv("MODEL_AUTO_DOWNLOAD", "true").lower() == "true"

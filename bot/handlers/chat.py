@@ -4,9 +4,10 @@ Handles private chats, group chats, comments, photo analysis.
 Даша — дизайнер мебели: консультирует по дизайну, материалам, заказам.
 
 РЕЖИМЫ:
-  - Личный чат (private): полная консультация, история диалога
-  - Группа/супергруппа: отвечает на упоминания @asdasha_bot и на сообщения
-    с мебельной/дизайнерской тематикой (кратко, как комментарий)
+  - Личный чат (private): полная консультация, история диалога, живое общение
+  - Группа/супергруппа: активное участие! Отвечает на упоминания @asdasha_bot,
+    реагирует на мебельную/дизайнерскую тематику, комментирует обсуждения,
+    поддерживает беседу. Объём ответа зависит от контекста.
 """
 
 import re
@@ -103,6 +104,52 @@ def _has_furniture_topic(text: str) -> bool:
     """Проверяет, содержит ли текст мебельную/дизайнерскую тематику."""
     text_lower = text.lower()
     return any(kw in text_lower for kw in _FURNITURE_TRIGGER_KEYWORDS)
+
+
+def _estimate_response_length(text: str, chat_type: str, is_mentioned: bool) -> int:
+    """Estimate optimal response length based on context.
+
+    В личке — максимум места. В группе — зависит от контекста:
+    - Короткий вопрос → краткий ответ (1-3 предложения)
+    - Развернутый вопрос с деталями → средний ответ (3-6 предложений)
+    - Прямое упоминание → более развернутый ответ
+    """
+    if chat_type == "private":
+        return 4000
+
+    text_lower = text.lower()
+    text_len = len(text)
+
+    # Mentioned — can be more verbose
+    if is_mentioned:
+        if text_len > 100:
+            return 1500  # Подробный вопрос с упоминанием — развернутый ответ
+        return 800  # Краткое упоминание — средний ответ
+
+    # Long message with details — medium response
+    if text_len > 150:
+        return 1000
+
+    # Short message — brief response
+    if text_len < 30:
+        return 400  # Одно слово — один короткий ответ
+
+    return 600  # Default for groups
+
+
+def _is_conversational(text: str) -> bool:
+    """Check if message is casual conversation (greetings, reactions, etc.)"""
+    text_lower = text.lower().strip()
+    conversational = [
+        "привет", "здравствуй", "хай", "хей", "добрый день", "доброе утро",
+        "добрый вечер", "спасибо", "спс", "благодарю", "класс", "круто",
+        "отлично", "супер", "здорово", "понятно", "ясно", "ладно",
+        "ок", "окей", "ага", "да", "нет", "ну да", "конечно", "точно",
+        "хорошо", "пойдёт", "согласен", "согласна", "поддерживаю",
+        "красиво", "нравится", "круто выглядет", "вайб", "имба",
+        "мешать не буду", "не мешаю", "прохожу мимо", "просто так",
+    ]
+    return any(text_lower == word or text_lower.startswith(word + " ") or text_lower.startswith(word + "!") for word in conversational)
 
 
 def _is_reply_to_bot(message: Message) -> bool:
@@ -298,25 +345,36 @@ async def handle_text_message(message: Message):
         return
 
     chat_type = message.chat.type
+    is_mentioned = _is_mentioned(message)
 
     # ═══ GROUP / SUPERGROUP LOGIC ═══
-    # В группах Даша отвечает только на:
-    #   - упоминания (@asdasha_bot / "даша")
-    #   - сообщения с мебельной/дизайнерской тематикой
-    #   - replies на свои сообщения
+    # В группах Даша активно участвует в обсуждениях:
+    #   - На упоминания (@asdasha_bot / "даша") — всегда отвечает развернуто
+    #   - На сообщения с мебельной/дизайнерской тематикой — комментирует
+    #   - На replies на свои сообщения — отвечает
+    #   - На короткие разговорные фразы (привет, спасибо, класс) — реагирует живо
+    #   - ВЕРЯТНОСТЬ (не на каждое сообщение) — для мебели 80%, для общего 30%
     if chat_type in ("group", "supergroup"):
         should_respond = (
-            _is_mentioned(message)
-            or _has_furniture_topic(text)
+            is_mentioned
             or _is_reply_to_bot(message)
+            or _has_furniture_topic(text)
         )
-        if not should_respond:
-            return  # Молча игнорируем нерелевантные сообщения в группах
 
-        # В группе используем COMMENT route — краткие ответы
+        # Для коротких разговорных фраз — реагируем с небольшой вероятностью
+        # чтобы Даша не была навязчивой, но и не молчала всегда
+        if not should_respond and _is_conversational(text):
+            # 25% шанс отреагировать на разговорные фразы (не каждый раз)
+            if random.random() < 0.25:
+                should_respond = True
+
+        if not should_respond:
+            return  # Игнорируем нерелевантные сообщения
+
+        # В группе используем COMMENT route
         route_type = "comment"
-        # Адаптивный лимит символов для группы
-        max_chars = adaptive_max_chars(chat_type)
+        # Адаптивный лимит символов — зависит от контекста
+        max_chars = _estimate_response_length(text, chat_type, is_mentioned)
     else:
         # Private chat — полная консультация
         route_type = "chat"
@@ -339,12 +397,36 @@ async def handle_text_message(message: Message):
 
     # Add group context if in group
     if chat_type in ("group", "supergroup"):
+        chat_name = message.chat.title or "группа"
+        user_name = message.from_user.first_name or "человек"
+
         context_additions += chat_type_context(message)
         context_additions += (
-            "\n\nТы комментируешь в группе. Отвечай КРАТКО (1-5 предложений), "
-            "по делу, как полезный комментарий. Не пиши длинных лекций. "
-            "Если уместно — предложи позвонить или зайти на сайт."
+            f"\n\nТы в чате '{chat_name}'. Пишет {user_name}. "
         )
+
+        # More detailed instructions for mentioned
+        if is_mentioned:
+            context_additions += (
+                "Тебя УПОМЯНУЛИ — отвечай более развернуто, как эксперт-дизайнер. "
+                "Будь живой, покажи интерес к вопросу. "
+            )
+        elif _is_reply_to_bot(message):
+            context_additions += (
+                "Это ответ на твоё сообщение — продолжи диалог естественно. "
+            )
+        elif _is_conversational(text):
+            context_additions += (
+                "Короткая разговорная фраза — отреагируй живо и естественно, "
+                "как живой человек. 1-2 предложения. Можешь использовать эмодзи. "
+            )
+        else:
+            # Furniture topic but not mentioned
+            context_additions += (
+                "Комментируешь по делу, но живо — 1-3 предложения. "
+                "Добавь экспертное мнение как дизайнер. "
+                "Если уместно — предложи позвонить или зайти на сайт. "
+            )
 
     # Add phone info if user asks
     phone = config.PHONE
