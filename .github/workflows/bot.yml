@@ -236,7 +236,7 @@ jobs:
           POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
           POLLINATIONS_BASE_URL: "https://gen.pollinations.ai"
 
-          # HuggingFace — for model download
+          # HuggingFace — for model download AND free LLM inference (Qwen2.5/Llama/Mistral)
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
           # Database
@@ -256,16 +256,18 @@ jobs:
           GROUP_IGNORE_BOTS: "true"
         run: |
           echo "=== Starting Dasha Bot v4.0 — MULTI-PROVIDER FALLBACK ==="
-          echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY)"
-          echo "CLOUD FALLBACK: GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations"
+          echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY for chat/channel)"
+          echo "CLOUD FALLBACK: GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations"
+          echo "GROUP COMMENTS: cloud-only (local bypassed for speed, ~18s vs ~85s)"
           echo "CHANNEL: @abakan_mebel (2 posts/hour, every 30 min)"
-          echo "FOOTER: Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online"
+          echo "FOOTER: Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online (single, no duplication)"
           echo "=== Launching bot with UNLIMITED auto-restart ==="
 
           # Show configured providers
           echo ""
           echo "Configured providers:"
-          [ -n "$GH_PAT_TOKEN" ] && echo "  ✅ GitHub Models (GPT-4o-mini)" || echo "  ⏭️  GitHub Models (no PAT)"
+          [ -n "$GH_PAT_TOKEN" ] && echo "  ✅ GitHub Models (GPT-4.1-mini)" || echo "  ⏭️  GitHub Models (no PAT)"
+          [ -n "$HF_TOKEN" ] && echo "  ✅ HuggingFace (Qwen2.5-7B, Llama-3.1, Mistral)" || echo "  ⏭️  HuggingFace (no HF_TOKEN)"
           [ -n "$GROQ_API_KEY" ] && echo "  ✅ Groq (Llama-3.3-70B, ultra-fast)" || echo "  ⏭️  Groq (no key)"
           [ -n "$GEMINI_API_KEY" ] && echo "  ✅ Gemini (2.0-Flash)" || echo "  ⏭️  Gemini (no key)"
           [ -n "$OPENROUTER_API_KEY" ] && echo "  ✅ OpenRouter (20+ models)" || echo "  ⏭️  OpenRouter (no key)"

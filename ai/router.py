@@ -33,6 +33,7 @@ from ai.providers.base import BaseAIProvider, AIResponse
 from ai.providers.local_provider import LocalProvider
 from ai.providers.pollinations_provider import PollinationsProvider
 from ai.providers.github_provider import GitHubModelsProvider
+from ai.providers.huggingface_provider import HuggingFaceProvider
 from ai.providers.groq_provider import GroqProvider
 from ai.providers.gemini_provider import GeminiProvider
 from ai.providers.openrouter_provider import OpenRouterProvider
@@ -214,35 +215,42 @@ class AIRouter:
             providers.append(("github", github))
             logger.info("GitHub Models provider configured (PAT)")
 
-        # 3. Groq (free, ultra-fast)
+        # 3. HuggingFace Inference (free via HF_TOKEN — already configured for model download)
+        huggingface = None
+        if config.HF_TOKEN:
+            huggingface = HuggingFaceProvider(api_key=config.HF_TOKEN)
+            providers.append(("huggingface", huggingface))
+            logger.info("HuggingFace Inference provider configured (HF_TOKEN — Qwen2.5/Llama/Mistral)")
+
+        # 4. Groq (free, ultra-fast)
         groq = None
         if config.GROQ_API_KEY:
             groq = GroqProvider(api_key=config.GROQ_API_KEY)
             providers.append(("groq", groq))
             logger.info("Groq provider configured (API key)")
 
-        # 4. Google Gemini (free)
+        # 5. Google Gemini (free)
         gemini = None
         if config.GEMINI_API_KEY:
             gemini = GeminiProvider(api_key=config.GEMINI_API_KEY)
             providers.append(("gemini", gemini))
             logger.info("Gemini provider configured (API key)")
 
-        # 5. OpenRouter (free, many models)
+        # 6. OpenRouter (free, many models)
         openrouter = None
         if config.OPENROUTER_API_KEY:
             openrouter = OpenRouterProvider(api_key=config.OPENROUTER_API_KEY)
             providers.append(("openrouter", openrouter))
             logger.info("OpenRouter provider configured (API key)")
 
-        # 6. Cerebras (free, ultra-fast)
+        # 7. Cerebras (free, ultra-fast)
         cerebras = None
         if config.CEREBRAS_API_KEY:
             cerebras = CerebrasProvider(api_key=config.CEREBRAS_API_KEY)
             providers.append(("cerebras", cerebras))
             logger.info("Cerebras provider configured (API key)")
 
-        # 7. Pollinations (free, NO KEY NEEDED — always available)
+        # 8. Pollinations (free, NO KEY NEEDED — always available)
         pollinations = PollinationsProvider(
             api_key=config.POLLINATIONS_API_KEY,
             base_url=config.POLLINATIONS_BASE_URL,
@@ -262,6 +270,7 @@ class AIRouter:
             pollinations=pollinations,
             local=local,
             github=github,
+            huggingface=huggingface,
             groq=groq,
             gemini=gemini,
             openrouter=openrouter,

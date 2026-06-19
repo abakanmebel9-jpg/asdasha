@@ -77,6 +77,11 @@ class BotConfig:
     POLLINATIONS_API_KEY: str = os.getenv("POLLINATIONS_API_KEY", "")
     POLLINATIONS_BASE_URL: str = os.getenv("POLLINATIONS_BASE_URL", "https://gen.pollinations.ai")
 
+    # 7. HuggingFace Inference — FREE via HF_TOKEN (router.huggingface.co)
+    #    Uses the SAME HF_TOKEN already configured for model download.
+    #    Models: Qwen2.5-7B, Llama-3.1-8B, Mistral-7B (good Russian)
+    #    No additional key needed — just enable in the fallback chain.
+
     # HuggingFace — for model download only
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
 

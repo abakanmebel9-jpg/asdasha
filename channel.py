@@ -45,9 +45,10 @@ def _build_footer() -> str:
     return POST_FOOTER
 
 
-def _truncate_for_channel(text: str, has_media: bool = False) -> str:
-    """Truncate text for Telegram channel limits.
+def _truncate_body(text: str, has_media: bool = False) -> str:
+    """Truncate the POST BODY to fit Telegram limits (footer added separately).
 
+    Does NOT append the footer — use _build_post_with_footer() for that.
     Telegram limits:
       - 4096 chars for text-only messages
       - 1024 chars for messages with media (photo/video)
@@ -72,9 +73,38 @@ def _truncate_for_channel(text: str, has_media: bool = False) -> str:
             text = truncated[:last_space] + "…"
         else:
             text = truncated + "…"
-        logger.info(f"Truncated post from {len(text)} to {len(text)} chars (limit {max_body})")
+        logger.info(f"Truncated post body to {len(text)} chars (limit {max_body})")
 
-    return text + "\n" + footer
+    return text
+
+
+def _build_post_with_footer(body: str, has_media: bool = False) -> str:
+    """Truncate body and append the standard footer ONCE.
+
+    Call this exactly ONCE per post to avoid footer duplication.
+    """
+    body = _truncate_body(body, has_media=has_media)
+    return body + "\n" + _build_footer()
+
+
+def _strip_footer(text: str) -> str:
+    """Remove the footer (and trailing separator) from text if present."""
+    footer = _build_footer()
+    if text.endswith(footer):
+        text = text[: -len(footer)]
+    # Remove trailing newlines/whitespace left behind
+    text = re.sub(r"[\n\s]+$", "", text)
+    return text
+
+
+# Backward-compat alias for any external callers (e.g. admin.py send_post)
+def _truncate_for_channel(text: str, has_media: bool = False) -> str:
+    """Legacy alias — truncates body AND appends footer.
+
+    DEPRECATED: use _build_post_with_footer() to avoid double-footer bugs.
+    Kept for backward compatibility with admin.py's _build_footer() import.
+    """
+    return _build_post_with_footer(text, has_media=has_media)
 
 
 class ChannelManager:
@@ -157,9 +187,9 @@ class ChannelManager:
             post_text = re.sub(pattern, "", post_text, flags=re.MULTILINE | re.IGNORECASE)
         post_text = re.sub(r'\n{3,}', '\n\n', post_text).strip()
 
-        # Add standard footer (with proper truncation for Telegram limits)
+        # Add standard footer ONCE (with proper truncation for Telegram limits)
         has_media = bool(item.get("image_urls"))
-        post_text = _truncate_for_channel(post_text, has_media=has_media)
+        post_text = _build_post_with_footer(post_text, has_media=has_media)
 
         # Verify final text fits Telegram limit (final safety check)
         final_limit = TELEGRAM_MEDIA_TEXT_LIMIT if has_media else TELEGRAM_TEXT_LIMIT
@@ -193,13 +223,13 @@ class ChannelManager:
         # Fallback: text only
         if not sent:
             try:
-                # For text-only, re-truncate with the text-only limit
+                # If the post was prepared for media (1024 limit) but we're sending
+                # text-only (4096 limit), rebuild with the larger text-only limit
+                # so we can include more of the original body. Strip the existing
+                # footer first, then re-append it once.
                 if has_media:
-                    # Rebuild without media limit
-                    body_match = re.match(r'^(.*?)\n━', post_text, re.DOTALL)
-                    if body_match:
-                        body = body_match.group(1).rstrip()
-                        post_text = _truncate_for_channel(body, has_media=False)
+                    body = _strip_footer(post_text)
+                    post_text = _build_post_with_footer(body, has_media=False)
                 msg = await self._bot.send_message(
                     chat_id=config.CHANNEL_ID,
                     text=post_text,
@@ -292,7 +322,7 @@ class ChannelManager:
             post_text = re.sub(pattern, "", post_text, flags=re.MULTILINE | re.IGNORECASE)
         post_text = re.sub(r'\n{3,}', '\n\n', post_text).strip()
 
-        post_text = _truncate_for_channel(post_text, has_media=False)
+        post_text = _build_post_with_footer(post_text, has_media=False)
 
         # Final safety check
         if len(post_text) > TELEGRAM_TEXT_LIMIT:
@@ -317,12 +347,23 @@ class ChannelManager:
     async def _send_with_image(
         self, chat_id: str, text: str, image_url: str,
     ) -> bool:
-        """Send a post with an image from URL."""
+        """Send a post with an image from URL.
+
+        NOTE: `text` must already include the footer (built by
+        _build_post_with_footer). This method does NOT re-append the footer
+        to avoid duplication. If the text exceeds the media caption limit,
+        the body is re-truncated while preserving exactly one footer.
+        """
         if not self._bot:
             return False
 
-        # Truncate text for media posts (1024 char limit)
-        text = _truncate_for_channel(text, has_media=True)
+        # If text exceeds the media caption limit (1024), re-truncate the BODY
+        # and re-append the footer ONCE. This prevents the double-footer bug
+        # that occurred when _truncate_for_channel was called here on text
+        # that already had the footer appended.
+        if len(text) > TELEGRAM_MEDIA_TEXT_LIMIT:
+            body = _strip_footer(text)
+            text = _build_post_with_footer(body, has_media=True)
 
         # Download image
         import httpx

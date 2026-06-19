@@ -1,22 +1,26 @@
 """Provider Manager v4.0 — MULTI-PROVIDER FALLBACK for Dasha Bot.
 
 COMPLETE FALLBACK CHAIN (tested & integrated):
-  1. LOCAL:      RuadaptQwen3-4B (primary, no internet needed)
-  2. GITHUB:     GitHub Models via PAT (free, GPT-4o-mini)
-  3. GROQ:       Groq free tier (free, ULTRA FAST Llama-3.3-70B)
-  4. GEMINI:     Google Gemini free (free, Gemini-2.0-Flash)
-  5. OPENROUTER: OpenRouter free models (free, 20+ models)
-  6. CEREBRAS:   Cerebras free tier (free, ultra-fast Llama-3.3-70B)
-  7. POLLINATIONS: Pollinations free (NO KEY NEEDED, always available)
+  1. LOCAL:        RuadaptQwen3-4B (primary, no internet needed) — CHAT/FUNCTION only
+  2. GITHUB:       GitHub Models via PAT (free, GPT-4o-mini)
+  3. HUGGINGFACE:  HF Inference via HF_TOKEN (free, Qwen2.5/Llama-3.1/Mistral)
+  4. GROQ:         Groq free tier (free, ULTRA FAST Llama-3.3-70B)
+  5. GEMINI:       Google Gemini free (free, Gemini-2.0-Flash)
+  6. OPENROUTER:   OpenRouter free models (free, 20+ models)
+  7. CEREBRAS:     Cerebras free tier (free, ultra-fast Llama-3.3-70B)
+  8. POLLINATIONS: Pollinations free (NO KEY NEEDED, always available)
+
+NOTE: Local model is BYPASSED for COMMENT route (group messages) because it
+takes ~85s per response — too slow for real-time chat. See LOCAL_FOR_COMMENTS.
 
 All providers are OpenAI-compatible except local (llama-cpp).
 Each provider is only tried if it has an API key configured.
 Pollinations is always available as absolute last resort.
 
 ROUTE STRATEGY:
-  CHAT     → Local → GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations
-  COMMENT  → Local → GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations
-  FUNCTION → Local → GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+  CHAT     → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+  COMMENT  → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (NO local)
+  FUNCTION → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from .base import AIResponse, BaseAIProvider
 from .local_provider import LocalProvider
 from .pollinations_provider import PollinationsProvider
 from .github_provider import GitHubModelsProvider
+from .huggingface_provider import HuggingFaceProvider
 from .groq_provider import GroqProvider
 from .gemini_provider import GeminiProvider
 from .openrouter_provider import OpenRouterProvider
@@ -49,6 +54,7 @@ class ProviderManager:
         pollinations: PollinationsProvider,
         local: Optional[LocalProvider] = None,
         github: Optional[GitHubModelsProvider] = None,
+        huggingface: Optional[HuggingFaceProvider] = None,
         groq: Optional[GroqProvider] = None,
         gemini: Optional[GeminiProvider] = None,
         openrouter: Optional[OpenRouterProvider] = None,
@@ -57,6 +63,7 @@ class ProviderManager:
         self.pollinations = pollinations
         self.local = local
         self.github = github
+        self.huggingface = huggingface
         self.groq = groq
         self.gemini = gemini
         self.openrouter = openrouter
@@ -171,13 +178,15 @@ class ProviderManager:
     def _build_fallback_chain(self) -> List[BaseAIProvider]:
         """Build ordered list of cloud providers (with keys configured).
 
-        Order: GitHub → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+        Order: GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
         Pollinations is always last (no key needed).
         """
         chain: List[BaseAIProvider] = []
 
         if self.github:
             chain.append(self.github)
+        if self.huggingface:
+            chain.append(self.huggingface)
         if self.groq:
             chain.append(self.groq)
         if self.gemini:
@@ -265,8 +274,8 @@ class ProviderManager:
         return True
 
     async def close(self) -> None:
-        for p in [self.local, self.pollinations, self.github, self.groq, self.gemini,
-                   self.openrouter, self.cerebras]:
+        for p in [self.local, self.pollinations, self.github, self.huggingface,
+                   self.groq, self.gemini, self.openrouter, self.cerebras]:
             if p:
                 await p.close()
 
@@ -280,6 +289,7 @@ class ProviderManager:
         for name, p in [
             ("local", self.local),
             ("github", self.github),
+            ("huggingface", self.huggingface),
             ("groq", self.groq),
             ("gemini", self.gemini),
             ("openrouter", self.openrouter),
