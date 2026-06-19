@@ -432,9 +432,9 @@ class LocalProvider(BaseAIProvider):
             )
 
         # Circuit breaker: if too many consecutive errors, pause briefly
-        if self._consecutive_errors >= 5:
+        if self._consecutive_errors >= 3:
             elapsed_since_error = time.time() - self._last_error_time
-            if elapsed_since_error < 120:  # 2-minute cooldown
+            if elapsed_since_error < 60:  # 1-minute cooldown (faster recovery)
                 return AIResponse(
                     text="",
                     model="local-qwen3-4b",
@@ -469,8 +469,8 @@ class LocalProvider(BaseAIProvider):
             if self._generating:
                 logger.warning("Local model: previous generation still running in thread pool, waiting...")
                 try:
-                    # 15s wait — if local model is busy, fail fast
-                    await asyncio.wait_for(self._generation_done.wait(), timeout=15.0)
+                    # 5s wait — if local model is busy, fail FAST to cloud fallback
+                    await asyncio.wait_for(self._generation_done.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
                     logger.error("Local model: timed out waiting for previous generation (15s)")
                     self._consecutive_errors += 1
@@ -611,14 +611,17 @@ class LocalProvider(BaseAIProvider):
 
     def _generate(self, prompt: str, max_tokens: int, temperature: float) -> str:
         """Synchronous generation call (runs in thread pool)."""
+        # CRITICAL: For CPU inference, cap max_tokens to prevent 73s generations.
+        # Chat responses should be short (300-500 tokens), posts can be longer.
+        effective_max = min(max_tokens, 800)  # Cap at 800 tokens for CPU speed
         result = self._llm(
             prompt,
-            max_tokens=max_tokens,
+            max_tokens=effective_max,
             temperature=temperature,
             top_p=0.9,
             top_k=40,
             repeat_penalty=1.1,
-            stop=["<|im_end|>", "https://", "<|im_start|>"],
+            stop=["<|im_end|>", "<|im_start|>"],
         )
 
         # Log generation stats for monitoring

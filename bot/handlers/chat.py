@@ -5,9 +5,12 @@ Handles private chats, group chats, comments, photo analysis.
 
 РЕЖИМЫ:
   - Личный чат (private): полная консультация, история диалога, живое общение
-  - Группа/супергруппа: активное участие! Отвечает на упоминания @asdasha_bot,
-    реагирует на мебельную/дизайнерскую тематику, комментирует обсуждения,
-    поддерживает беседу. Объём ответа зависит от контекста.
+  - Группа/супергруппа: АКТИВНО участвует! Отвечает на ВСЕ сообщения —
+    на упоминания @asdasha_bot / "даша" развёрнуто,
+    на мебельную тематику — как эксперт,
+    на короткие фразы — живо, 
+    на общие разговорные — иногда реагирует (20%),
+    на replies на свои сообщения — всегда.
 """
 
 import re
@@ -397,25 +400,24 @@ async def handle_text_message(message: Message):
     is_mentioned = _is_mentioned(message)
 
     # ═══ GROUP / SUPERGROUP LOGIC ═══
-    # В группах Даша активно участвует в обсуждениях:
-    #   - На упоминания (@asdasha_bot / "даша") — всегда отвечает развернуто
-    #   - На сообщения с мебельной/дизайнерской тематикой — комментирует
-    #   - На replies на свои сообщения — отвечает
-    #   - На короткие разговорные фразы (привет, спасибо, класс) — реагирует живо
-    #   - ВЕРЯТНОСТЬ (не на каждое сообщение) — для мебели 80%, для общего 30%
+    # Даша АКТИВНО участвует в обсуждениях во ВСЕХ чатах и группах:
+    #   1) Упоминания (@asdasha_bot / "даша") — ВСЕГДА отвечает развёрнуто
+    #   2) Replies на сообщения Даши — ВСЕГДА отвечает
+    #   3) Мебельная/дизайнерская тематика — ВСЕГДА комментирует как эксперт (70%)
+    #   4) Разговорные фразы (привет, спасибо, класс) — реагирует живо (30%)
+    #   5) Любое другое сообщение — иногда участвует в беседе (15%)
     if chat_type in ("group", "supergroup"):
-        should_respond = (
-            is_mentioned
-            or _is_reply_to_bot(message)
-            or _has_furniture_topic(text)
-        )
+        is_furniture = _has_furniture_topic(text)
+        is_conversational_msg = _is_conversational(text)
 
-        # Для коротких разговорных фраз — реагируем с небольшой вероятностью
-        # чтобы Даша не была навязчивой, но и не молчала всегда
-        if not should_respond and _is_conversational(text):
-            # 25% шанс отреагировать на разговорные фразы (не каждый раз)
-            if random.random() < 0.25:
-                should_respond = True
+        if is_mentioned or _is_reply_to_bot(message):
+            should_respond = True  # Always respond to mentions and replies
+        elif is_furniture:
+            should_respond = random.random() < 0.70  # 70% — usually comment
+        elif is_conversational_msg:
+            should_respond = random.random() < 0.30  # 30% — sometimes react
+        else:
+            should_respond = random.random() < 0.15  # 15% — occasional participation
 
         if not should_respond:
             # Still react to furniture messages even if not responding
@@ -444,41 +446,64 @@ async def handle_text_message(message: Message):
     # Build dynamic context additions (NOT the full persona — router uses compact prompt)
     # These additions are APPENDED to the router's compact system prompt
     context_additions = ""
-    if knowledge_context:
-        context_additions += f"\n\nРелевантные знания:\n{knowledge_context}"
 
-    # Add group context if in group
-    if chat_type in ("group", "supergroup"):
-        chat_name = message.chat.title or "группа"
-        user_name = message.from_user.first_name or "человек"
+    # ── USER MEMORY: tell Dasha who she's talking to ──
+    user_name = message.from_user.first_name or "человек"
+    user_username = message.from_user.username or ""
+    user_id = message.from_user.id
+    # Count previous messages for context
+    from bot.database import get_chat_history
+    user_history = await get_chat_history(user_id, limit=6)
+    msg_count = len(user_history) // 2  # rough estimate of exchanges
 
+    if chat_type == "private":
+        # In private chat — Dasha knows the user personally
+        user_identity = f"{user_name}"
+        if user_username:
+            user_identity += f" (@{user_username})"
+        if msg_count > 10:
+            context_additions += f"\n\nЭто {user_identity} — ваш постоянный клиент (уже {msg_count} сообщений в чате). "
+            if user_history:
+                # Extract last topic from recent messages
+                last_topics = [m[2] for m in user_history[-4:] if m[1] == "user" and len(m[2]) > 5]
+                if last_topics:
+                    context_additions += "Последние темы: " + ", ".join(t[:50] for t in last_topics[-2:])
+        elif msg_count > 0:
+            context_additions += f"\n\nВы общаетесь с {user_identity}. "
+        else:
+            context_additions += f"\n\nНовый собеседник — {user_identity}. Будь дружелюбной! "
+    else:
+        # In group — Dasha knows the user by name
         context_additions += chat_type_context(message)
-        context_additions += (
-            f"\n\nТы в чате '{chat_name}'. Пишет {user_name}. "
-        )
+        chat_name = message.chat.title or "группа"
+        user_identity = f"{user_name}"
+        if user_username:
+            user_identity += f" (@{user_username})"
+        context_additions += f"\n\nТы в чате '{chat_name}'. Пишет {user_identity}."
 
         # More detailed instructions for mentioned
         if is_mentioned:
             context_additions += (
-                "Тебя УПОМЯНУЛИ — отвечай более развернуто, как эксперт-дизайнер. "
-                "Будь живой, покажи интерес к вопросу. "
+                " Тебя УПОМЯНУЛИ — отвечай развёрнуто, как эксперт-дизайнер. "
+                "Будь живой, покажи интерес к вопросу."
             )
         elif _is_reply_to_bot(message):
             context_additions += (
-                "Это ответ на твоё сообщение — продолжи диалог естественно. "
+                " Это ответ на твоё сообщение — продолжи диалог естественно."
             )
         elif _is_conversational(text):
             context_additions += (
-                "Короткая разговорная фраза — отреагируй живо и естественно, "
-                "как живой человек. 1-2 предложения. Можешь использовать эмодзи. "
+                " Короткая разговорная фраза — отреагируй живо. 1-2 предложения."
             )
         else:
-            # Furniture topic but not mentioned
             context_additions += (
-                "Комментируешь по делу, но живо — 1-3 предложения. "
-                "Добавь экспертное мнение как дизайнер. "
-                "Если уместно — предложи позвонить или зайти на сайт. "
+                " Комментируешь по делу, но живо — 1-3 предложения. "
+                "Добавь экспертное мнение как дизайнер."
             )
+
+    # Add knowledge context for both private and group
+    if knowledge_context:
+        context_additions += f"\n\nРелевантные знания:\n{knowledge_context}"
 
     # Add phone info if user asks
     phone = config.PHONE

@@ -85,15 +85,19 @@ class ProviderManager:
         # Build ordered list of providers to try
         providers = self._build_fallback_chain()
 
-        # ── STEP 1: TRY LOCAL MODEL (always first) ──
+        # ── STEP 1: TRY LOCAL MODEL (with SHORT timeout for speed) ──
         if self.local:
+            # Use shorter max_tokens for comments to speed up local model
+            local_max = self._local_max(route_type, max_tokens)
             result = await self._try_provider(
                 self.local, "local", messages, model="local-qwen3-4b",
-                temperature=temperature, max_tokens=self._local_max(route_type, max_tokens),
+                temperature=temperature, max_tokens=local_max,
                 route_type=route_type, **kwargs,
             )
             if result.ok:
                 return result
+            # If local is busy/error — skip immediately, go to cloud
+            logger.info(f"Local model skipped ({result.error}), trying cloud providers...")
 
         # ── STEP 2-N: TRY CLOUD PROVIDERS IN ORDER ──
         cloud_providers = providers  # All non-local providers

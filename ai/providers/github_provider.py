@@ -42,10 +42,10 @@ GITHUB_MODELS_BASE = "https://models.github.ai/inference"
 CHAT_URL = f"{GITHUB_MODELS_BASE}/chat/completions"
 
 # Models optimized for Russian (tested & ranked by quality)
+# Order matters: try each model if previous returns 403/429
 RUSSIAN_MODELS = [
     "openai/gpt-4o-mini",           # Best Russian quality, fast
-    "openai/gpt-4.1-mini",           # Good Russian, newer
-    "meta-llama/Llama-3.3-70B-Instruct",  # Decent Russian
+    "meta-llama/Llama-3.3-70B-Instruct",  # Good Russian
     "mistralai/Mistral-Small-24B-Instruct-2501",  # OK Russian
 ]
 
@@ -94,80 +94,78 @@ class GitHubModelsProvider(BaseAIProvider):
             "X-GitHub-Api-Version": "2022-11-28",
         }
 
-        payload: Dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
+        # Try models in order — if one returns 403/429, try next
+        models_to_try = RUSSIAN_MODELS if not model or model == DEFAULT_MODEL else [model]
 
-        start = time.time()
-        try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await client.post(
-                    CHAT_URL,
-                    headers=headers,
-                    json=payload,
-                )
+        for try_model in models_to_try:
+            payload: Dict[str, Any] = {
+                "model": try_model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
 
-                if response.status_code == 401:
-                    return AIResponse(
-                        text="", model=model, provider="github-models",
-                        error="Unauthorized — check PAT and models:read scope",
-                    )
-                if response.status_code == 403:
-                    return AIResponse(
-                        text="", model=model, provider="github-models",
-                        error="Forbidden — model not available or rate limit",
-                    )
-                if response.status_code == 429:
-                    return AIResponse(
-                        text="", model=model, provider="github-models",
-                        error="Rate limited (429)",
-                    )
-                if response.status_code != 200:
-                    body = response.text[:300]
-                    return AIResponse(
-                        text="", model=model, provider="github-models",
-                        error=f"HTTP {response.status_code}: {body}",
+            start = time.time()
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        CHAT_URL,
+                        headers=headers,
+                        json=payload,
                     )
 
-                data = response.json()
-                elapsed = (time.time() - start) * 1000
+                    if response.status_code == 403 or response.status_code == 404:
+                        # Model not available — try next
+                        logger.debug(f"GitHub Models: {try_model} returned {response.status_code}, trying next model")
+                        continue
+                    if response.status_code == 401:
+                        return AIResponse(
+                            text="", model=try_model, provider="github-models",
+                            error="Unauthorized — check PAT and models:read scope",
+                        )
+                    if response.status_code == 429:
+                        return AIResponse(
+                            text="", model=try_model, provider="github-models",
+                            error="Rate limited (429)",
+                        )
+                    if response.status_code != 200:
+                        body = response.text[:300]
+                        return AIResponse(
+                            text="", model=try_model, provider="github-models",
+                            error=f"HTTP {response.status_code}: {body}",
+                        )
 
-                text = ""
-                if "choices" in data and data["choices"]:
-                    text = data["choices"][0].get("message", {}).get("content", "")
+                    data = response.json()
+                    elapsed = (time.time() - start) * 1000
 
-                if text:
-                    self._success_count += 1
-                    return AIResponse(
-                        text=text.strip(),
-                        model=model,
-                        provider="github-models",
-                        tokens_used=data.get("usage", {}).get("total_tokens", 0),
-                        latency_ms=elapsed,
-                    )
+                    text = ""
+                    if "choices" in data and data["choices"]:
+                        text = data["choices"][0].get("message", {}).get("content", "")
 
+                    if text:
+                        self._success_count += 1
+                        return AIResponse(
+                            text=text.strip(),
+                            model=try_model,
+                            provider="github-models",
+                            tokens_used=data.get("usage", {}).get("total_tokens", 0),
+                            latency_ms=elapsed,
+                        )
+
+            except httpx.TimeoutException:
                 self._fail_count += 1
-                return AIResponse(
-                    text="", model=model, provider="github-models",
-                    error="Empty response",
-                )
+                continue  # Try next model on timeout
+            except Exception as e:
+                self._fail_count += 1
+                logger.error(f"GitHub Models error ({try_model}): {e}")
+                continue
 
-        except httpx.TimeoutException:
-            self._fail_count += 1
-            return AIResponse(
-                text="", model=model, provider="github-models",
-                error="Timeout",
-            )
-        except Exception as e:
-            self._fail_count += 1
-            logger.error(f"GitHub Models error: {e}")
-            return AIResponse(
-                text="", model=model, provider="github-models",
-                error=str(e),
-            )
+        # All models failed
+        self._fail_count += 1
+        return AIResponse(
+            text="", model=model, provider="github-models",
+            error=f"All GitHub models failed (tried {len(models_to_try)})",
+        )
 
     def get_status(self) -> Dict:
         return {

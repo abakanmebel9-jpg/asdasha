@@ -138,11 +138,23 @@ class ChannelManager:
         # Clean and format post
         post_text = response.text.strip()
 
-        # Remove any existing footer (AI might generate one)
-        footer_lines = ["Автор @asdasha_bot", "abakanmebel.online", "Мебель на заказ"]
-        for line in footer_lines:
-            post_text = post_text.replace(line, "")
-        post_text = re.sub(r'━+', '', post_text).strip()
+        # Remove ANY existing contact info / footer from AI text
+        # AI sometimes generates its own footer — we must remove ALL of them
+        footer_patterns = [
+            r"Кухни на заказ.*?abakanmebel\.online",
+            r"🛋.*?abakanmebel\.online",
+            r"📞.*?\+7.*?37-17",
+            r"wa\.me/79134483717",
+            r"@abakan_mebel",
+            r"@asdasha_bot",
+            r"АбаканМебель.*?$",
+            r"abakanmebel\.online",
+            r"━━━+",
+            r"═══+",
+            r"───+",
+        ]
+        for pattern in footer_patterns:
+            post_text = re.sub(pattern, "", post_text, flags=re.MULTILINE | re.IGNORECASE)
         post_text = re.sub(r'\n{3,}', '\n\n', post_text).strip()
 
         # Add standard footer (with proper truncation for Telegram limits)
@@ -265,10 +277,19 @@ class ChannelManager:
             return False
 
         post_text = response.text.strip()
-        # Remove AI-generated footers if any
-        for line in ["Автор @asdasha_bot", "abakanmebel.online", "Мебель на заказ"]:
-            post_text = post_text.replace(line, "")
-        post_text = re.sub(r'━+', '', post_text).strip()
+        # Remove ANY existing contact info / footer from AI text
+        footer_patterns = [
+            r"Кухни на заказ.*?abakanmebel\.online",
+            r"📞.*?\+7.*?37-17",
+            r"wa\.me/79134483717",
+            r"@abakan_mebel",
+            r"@asdasha_bot",
+            r"АбаканМебель.*?$",
+            r"abakanmebel\.online",
+            r"━━━+", r"═══+", r"───+",
+        ]
+        for pattern in footer_patterns:
+            post_text = re.sub(pattern, "", post_text, flags=re.MULTILINE | re.IGNORECASE)
         post_text = re.sub(r'\n{3,}', '\n\n', post_text).strip()
 
         post_text = _truncate_for_channel(post_text, has_media=False)
