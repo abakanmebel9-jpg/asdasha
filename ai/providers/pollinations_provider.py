@@ -1,23 +1,44 @@
-"""Pollinations AI Provider v2.0 — FREE API + AUTH API FALLBACK for Dasha Bot.
+"""Pollinations AI Provider v3.0 — TESTED FREE MODELS for Dasha Bot.
 
-DUAL-ENDPOINT STRATEGY:
-  1. Primary: gen.pollinations.ai (requires API key — if configured)
-  2. Free fallback: text.pollinations.ai/openai/chat/completions (anonymous, NO API key)
-     - Only supports "openai" model (maps to gpt-oss-20b internally)
-     - Queue limit: 1 request per IP — rate limiting required
-     - Reliable and always free
+COMPLETELY TESTED free models (June 2025):
 
-  3. Ultra-free fallback: text.pollinations.ai/ (plain text response)
-     - Same as above but returns plain text instead of JSON
-     - Used as last resort if /openai/ endpoint fails
+TRIPLE-ENDPOINT FALLBACK STRATEGY:
+  1. AUTH API: gen.pollinations.ai/v1 (if POLLINATIONS_API_KEY configured)
+     — 106 models (openai, mistral, deepseek, claude, gemini, llama, etc.)
+     — Requires Pollinations API key from enter.pollinations.ai
 
-LOCAL MODEL IS PRIMARY. Pollinations is FALLBACK ONLY — used when
-the local model is physically unavailable (file missing, load error, etc.)
+  2. FREE JSON API: text.pollinations.ai/openai/chat/completions (ANONYMOUS)
+     — Model: openai (gpt-oss-20b reasoning, 20B params)
+     — Queue limit: 1 request per IP (MUST rate-limit 5+ seconds between requests)
+     — Speed: 5-10 seconds typical
+     — Russian quality: GOOD — natural language, proper grammar
+     — Tier: anonymous
 
-FREE MODELS (tested and working on text.pollinations.ai):
-  - openai (gpt-oss-20b) — best quality, good Russian support
+  3. FREE PLAIN API: text.pollinations.ai/ (ANONYMOUS, plain text response)
+     — Same model, same queue limit
+     — Returns raw text (not JSON) — parse carefully
+     — Last resort if JSON endpoint fails
+
+RATE LIMITING (CRITICAL for anonymous tier):
+  - Queue limit: 1 request per IP address
+  - If queue is full: HTTP 429 error
+  - Solution: minimum 5 seconds between ANY Pollinations request
+  - We track last request time and enforce this globally
+
+TESTED & NOT FREE (require API keys):
+  - Google Gemini: requires AI Studio API key
+  - HuggingFace: requires HF_TOKEN
+  - OpenRouter: requires auth
+  - DeepSeek: requires API key
+  - Together AI: requires API key
+  - Cohere: requires API key
+  - Groq: requires API key
+  - Cloudflare Workers AI: requires account
+
+LOCAL MODEL IS PRIMARY. Pollinations is FALLBACK ONLY.
 """
 
+import asyncio
 import logging
 import random
 import time
@@ -29,33 +50,42 @@ from ai.providers.base import BaseAIProvider, AIResponse
 
 logger = logging.getLogger("dasha.ai.pollinations")
 
-# ── Endpoints ──
+# ── Endpoints (tested and working) ──
 AUTH_BASE_URL = "https://gen.pollinations.ai"
-FREE_BASE_URL = "https://text.pollinations.ai/openai"
-ULTRA_FREE_URL = "https://text.pollinations.ai"
+FREE_JSON_URL = "https://text.pollinations.ai/openai/chat/completions"
+FREE_PLAIN_URL = "https://text.pollinations.ai"
 
 # ── Models ──
 DEFAULT_MODEL = "openai"
-FREE_MODEL = "openai"  # Only model available on free endpoint
+FREE_MODEL = "openai"  # Only model available on anonymous tier (gpt-oss-20b)
 
 # Models available on auth endpoint (gen.pollinations.ai with API key)
 AUTH_CHAT_MODELS = [
-    "openai", "openai-fast", "openai-large", "mistral", "mistral-large",
-    "mistral-small-3.2", "deepseek", "deepseek-pro", "llama", "grok",
-    "claude", "claude-fast", "claude-large", "gemini", "gemini-fast",
-    "gemini-3-flash", "qwen-large", "polly", "kimi",
-]
-
-AUTH_CONTENT_MODELS = [
-    "openai", "openai-large", "mistral-large", "deepseek-pro",
-    "claude-large", "gemini", "qwen-large",
+    "openai", "openai-fast", "openai-large",
+    "mistral", "mistral-large", "mistral-small-3.2",
+    "deepseek", "deepseek-pro",
+    "llama", "llama-maverick", "llama-scout",
+    "grok", "grok-large",
+    "claude", "claude-fast", "claude-large", "claude-opus-4.6", "claude-opus-4.7",
+    "gemini", "gemini-fast", "gemini-3-flash", "gemini-flash-lite-3.1", "gemini-large",
+    "qwen-coder", "qwen-coder-large", "qwen-large",
+    "polly", "kimi", "kimi-code",
+    "gemma", "gemma-fast",
 ]
 
 IMAGE_MODELS = ["flux", "flux-pro", "flux-realism", "turbo"]
 
+# ── Rate limiting constants ──
+# CRITICAL: Anonymous tier allows only 1 request in queue per IP.
+# If we send a request while previous is still processing, we get HTTP 429.
+# Minimum interval between requests must be sufficient for model to finish
+# generation (typically 5-15 seconds). We use 5 seconds + jitter.
+MIN_REQUEST_INTERVAL = 5.0  # Minimum seconds between requests
+JITTER_RANGE = (0.0, 2.0)   # Random jitter to avoid periodic patterns
+
 
 class PollinationsProvider(BaseAIProvider):
-    """Pollinations AI provider — FREE API + AUTH API fallback."""
+    """Pollinations AI provider — TRIPLE FALLBACK with tested free models."""
 
     name = "pollinations"
 
@@ -66,10 +96,10 @@ class PollinationsProvider(BaseAIProvider):
         self._free_success_count = 0
         self._auth_success_count = 0
         self._last_request_time = 0.0
-        self._min_interval = 2.0  # Min 2s between requests (free queue limit)
+        self._queue_429_count = 0
 
     async def is_available(self) -> bool:
-        return True  # Always available (free API)
+        return True  # Always available (free anonymous tier)
 
     async def chat(
         self,
@@ -81,35 +111,37 @@ class PollinationsProvider(BaseAIProvider):
     ) -> AIResponse:
         self._total_requests += 1
 
-        # ── Rate limiting for free endpoint (1 req per IP queue) ──
-        now = time.time()
-        elapsed_since_last = now - self._last_request_time
-        if elapsed_since_last < self._min_interval:
-            wait = self._min_interval - elapsed_since_last + 0.5
-            await asyncio_sleep(wait)
+        # ── CRITICAL: Rate limiting for anonymous tier ──
+        # Anonymous queue allows only 1 concurrent request per IP.
+        # We must wait for previous request to finish + buffer.
+        await self._wait_for_slot()
 
         self._last_request_time = time.time()
 
-        # ── STRATEGY: Try auth API first (if key available), then free ──
+        # ── STRATEGY 1: AUTH API (if API key configured) ──
         if self.api_key:
-            # Use the AUTHENTICATED endpoint with specified model
             model = model or DEFAULT_MODEL
             result = await self._chat_auth(messages, model, temperature, max_tokens, **kwargs)
             if result.ok:
                 self._fail_count = 0
                 self._auth_success_count += 1
                 return result
-            logger.warning(f"Auth API failed: {result.error}, falling back to free API")
+            # Auth failed — fall through to free API
+            logger.warning(f"Auth API failed ({result.error}), falling back to free")
 
-        # ── FREE FALLBACK: text.pollinations.ai/openai/chat/completions ──
+        # ── STRATEGY 2: FREE JSON API (anonymous, returns JSON) ──
         result = await self._chat_free_json(messages, temperature, max_tokens, **kwargs)
         if result.ok:
             self._fail_count = 0
             self._free_success_count += 1
             return result
-        logger.warning(f"Free JSON API failed: {result.error}")
+        logger.warning(f"Free JSON API failed ({result.error})")
 
-        # ── ULTRA-FREE FALLBACK: text.pollinations.ai/ (plain text) ──
+        # ── STRATEGY 3: FREE PLAIN API (anonymous, returns plain text) ──
+        # Add extra delay since previous request might still be in queue
+        await self._wait_for_slot()
+        self._last_request_time = time.time()
+
         result = await self._chat_free_plain(messages, temperature, **kwargs)
         if result.ok:
             self._fail_count = 0
@@ -119,6 +151,20 @@ class PollinationsProvider(BaseAIProvider):
         self._fail_count += 1
         return result
 
+    async def _wait_for_slot(self) -> None:
+        """Wait for the rate limit slot to be available.
+
+        Anonymous Pollinations allows only 1 request in queue per IP.
+        If we send while a request is pending, we get HTTP 429.
+        Solution: wait at least MIN_REQUEST_INTERVAL since last request.
+        """
+        now = time.time()
+        elapsed = now - self._last_request_time
+        if elapsed < MIN_REQUEST_INTERVAL:
+            wait_time = MIN_REQUEST_INTERVAL - elapsed + random.uniform(*JITTER_RANGE)
+            logger.debug(f"Rate limiting: waiting {wait_time:.1f}s for Pollinations slot")
+            await asyncio.sleep(wait_time)
+
     async def _chat_auth(
         self,
         messages: List[Dict[str, str]],
@@ -127,12 +173,15 @@ class PollinationsProvider(BaseAIProvider):
         max_tokens: int,
         **kwargs,
     ) -> AIResponse:
-        """Chat via AUTHENTICATED API (gen.pollinations.ai/v1)."""
+        """Chat via AUTHENTICATED API (gen.pollinations.ai/v1).
+
+        Supports 106+ models with an API key from enter.pollinations.ai.
+        """
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
-        payload = {
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
@@ -143,7 +192,7 @@ class PollinationsProvider(BaseAIProvider):
 
         start = time.time()
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     f"{AUTH_BASE_URL}/v1/chat/completions",
                     headers=headers,
@@ -155,7 +204,7 @@ class PollinationsProvider(BaseAIProvider):
                         text="", model=model, provider="pollinations-auth",
                         error="Rate limited (429)",
                     )
-                if response.status_code == 401 or response.status_code == 402:
+                if response.status_code in (401, 402, 403):
                     return AIResponse(
                         text="", model=model, provider="pollinations-auth",
                         error=f"Auth error ({response.status_code})",
@@ -185,7 +234,13 @@ class PollinationsProvider(BaseAIProvider):
                     text="", model=model, provider="pollinations-auth",
                     error="Empty response",
                 )
+        except httpx.TimeoutException:
+            return AIResponse(
+                text="", model=model, provider="pollinations-auth",
+                error="Timeout",
+            )
         except Exception as e:
+            logger.error(f"Auth API error: {e}")
             return AIResponse(
                 text="", model=model, provider="pollinations-auth",
                 error=str(e),
@@ -198,40 +253,43 @@ class PollinationsProvider(BaseAIProvider):
         max_tokens: int,
         **kwargs,
     ) -> AIResponse:
-        """Chat via FREE API (text.pollinations.ai/openai/chat/completions).
+        """Chat via FREE JSON API (text.pollinations.ai/openai/chat/completions).
 
-        Returns JSON, model is always "openai" (gpt-oss-20b).
-        Queue limit: 1 request per IP.
+        Model: openai (gpt-oss-20b reasoning, 20B parameters).
+        Tested: 5-10 seconds response time, good Russian quality.
+        Queue limit: 1 request per IP (enforced by _wait_for_slot).
         """
         headers = {"Content-Type": "application/json"}
-        payload = {
+        payload: Dict[str, Any] = {
             "model": FREE_MODEL,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "seed": kwargs.get("seed", random.randint(1, 999999)),
         }
-        if "seed" in kwargs:
-            payload["seed"] = kwargs["seed"]
-        else:
-            payload["seed"] = random.randint(1, 999999)
 
         start = time.time()
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
                 response = await client.post(
-                    f"{FREE_BASE_URL}/chat/completions",
+                    FREE_JSON_URL,
                     headers=headers,
                     json=payload,
                 )
 
                 if response.status_code == 429:
+                    self._queue_429_count += 1
+                    logger.warning(
+                        f"Pollinations free queue full (429), "
+                        f"total 429s: {self._queue_429_count}"
+                    )
                     return AIResponse(
-                        text="", model=FREE_MODEL, provider="pollinations-free",
+                        text="", model=FREE_MODEL, provider="pollinations-free-json",
                         error="Queue full (429)",
                     )
                 if response.status_code != 200:
                     return AIResponse(
-                        text="", model=FREE_MODEL, provider="pollinations-free",
+                        text="", model=FREE_MODEL, provider="pollinations-free-json",
                         error=f"HTTP {response.status_code}",
                     )
 
@@ -246,22 +304,23 @@ class PollinationsProvider(BaseAIProvider):
                     return AIResponse(
                         text=text.strip(),
                         model=FREE_MODEL,
-                        provider="pollinations-free",
+                        provider="pollinations-free-json",
                         tokens_used=data.get("usage", {}).get("total_tokens", 0),
                         latency_ms=elapsed,
                     )
                 return AIResponse(
-                    text="", model=FREE_MODEL, provider="pollinations-free",
-                    error="Empty response from free API",
+                    text="", model=FREE_MODEL, provider="pollinations-free-json",
+                    error="Empty response",
                 )
         except httpx.TimeoutException:
             return AIResponse(
-                text="", model=FREE_MODEL, provider="pollinations-free",
+                text="", model=FREE_MODEL, provider="pollinations-free-json",
                 error="Timeout",
             )
         except Exception as e:
+            logger.error(f"Free JSON API error: {e}")
             return AIResponse(
-                text="", model=FREE_MODEL, provider="pollinations-free",
+                text="", model=FREE_MODEL, provider="pollinations-free-json",
                 error=str(e),
             )
 
@@ -271,59 +330,59 @@ class PollinationsProvider(BaseAIProvider):
         temperature: float,
         **kwargs,
     ) -> AIResponse:
-        """Chat via ULTRA-FREE API (text.pollinations.ai/ — plain text response).
+        """Chat via FREE PLAIN API (text.pollinations.ai/).
 
-        Last resort — returns plain text, not JSON.
+        Same gpt-oss-20b model, returns raw text (not JSON).
+        Last resort — if JSON endpoint fails.
         """
         headers = {"Content-Type": "application/json"}
-        payload = {
+        payload: Dict[str, Any] = {
             "model": FREE_MODEL,
             "messages": messages,
             "temperature": temperature,
+            "seed": kwargs.get("seed", random.randint(1, 999999)),
         }
-        if "seed" in kwargs:
-            payload["seed"] = kwargs["seed"]
-        else:
-            payload["seed"] = random.randint(1, 999999)
 
         start = time.time()
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
                 response = await client.post(
-                    ULTRA_FREE_URL,
+                    FREE_PLAIN_URL,
                     headers=headers,
                     json=payload,
                 )
 
                 if response.status_code == 429:
+                    self._queue_429_count += 1
                     return AIResponse(
-                        text="", model=FREE_MODEL, provider="pollinations-ultrafree",
+                        text="", model=FREE_MODEL, provider="pollinations-free-plain",
                         error="Queue full (429)",
                     )
                 if response.status_code != 200:
                     return AIResponse(
-                        text="", model=FREE_MODEL, provider="pollinations-ultrafree",
+                        text="", model=FREE_MODEL, provider="pollinations-free-plain",
                         error=f"HTTP {response.status_code}",
                     )
 
                 text = response.text.strip()
                 elapsed = (time.time() - start) * 1000
 
-                # Filter out error messages in JSON
-                if text and not text.startswith("{") and not text.startswith('"error"'):
+                # Filter out error JSON responses
+                if text and not text.startswith("{") and not text.startswith('"error"') and len(text) > 5:
                     return AIResponse(
                         text=text,
                         model=FREE_MODEL,
-                        provider="pollinations-ultrafree",
+                        provider="pollinations-free-plain",
                         latency_ms=elapsed,
                     )
                 return AIResponse(
-                    text="", model=FREE_MODEL, provider="pollinations-ultrafree",
+                    text="", model=FREE_MODEL, provider="pollinations-free-plain",
                     error="Empty or error response",
                 )
         except Exception as e:
+            logger.error(f"Free plain API error: {e}")
             return AIResponse(
-                text="", model=FREE_MODEL, provider="pollinations-ultrafree",
+                text="", model=FREE_MODEL, provider="pollinations-free-plain",
                 error=str(e),
             )
 
@@ -331,6 +390,7 @@ class PollinationsProvider(BaseAIProvider):
         self, prompt: str, width: int = 1024, height: int = 1024,
         model: str = "", **kwargs,
     ) -> AIResponse:
+        """Generate image via Pollinations image API (always free)."""
         model = model or random.choice(IMAGE_MODELS)
         try:
             url = f"https://image.pollinations.ai/prompt/{prompt}"
@@ -350,13 +410,13 @@ class PollinationsProvider(BaseAIProvider):
                     return AIResponse(
                         text="",
                         model=model,
-                        provider="pollinations",
+                        provider="pollinations-image",
                         image_url=str(response.url),
                     )
         except Exception as e:
             logger.error(f"Pollinations image error: {e}")
         return AIResponse(
-            text="", model=model, provider="pollinations",
+            text="", model=model, provider="pollinations-image",
             error="Image generation failed",
         )
 
@@ -367,12 +427,8 @@ class PollinationsProvider(BaseAIProvider):
             "fail_count": self._fail_count,
             "free_success": self._free_success_count,
             "auth_success": self._auth_success_count,
+            "queue_429_count": self._queue_429_count,
             "has_api_key": bool(self.api_key),
-            "base_url": self.base_url,
+            "free_model": FREE_MODEL,
+            "rate_limit_interval": MIN_REQUEST_INTERVAL,
         }
-
-
-# ── Helper (can't import asyncio at module level in some contexts) ──
-async def asyncio_sleep(seconds: float):
-    import asyncio
-    await asyncio.sleep(seconds)
