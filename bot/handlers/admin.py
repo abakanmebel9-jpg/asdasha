@@ -120,8 +120,10 @@ async def cmd_send_post(message: Message):
         return
 
     try:
-        from channel import _build_footer
-        post_text = post_text + "\n" + _build_footer()
+        from channel import _build_post_with_footer, _strip_footer
+        # Strip any existing footer from AI text, then add it once
+        clean_text = _strip_footer(post_text)
+        post_text = _build_post_with_footer(clean_text, has_media=False)
 
         sent = await message.bot.send_message(
             chat_id=config.CHANNEL_ID,

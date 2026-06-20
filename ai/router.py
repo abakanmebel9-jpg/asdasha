@@ -1,19 +1,28 @@
-"""AI Router v4.0 — MULTI-PROVIDER FALLBACK + HUMAN-LIKE personality (Dasha Bot).
+"""AI Router v5.0 — MULTI-PROVIDER FALLBACK + HUMAN-LIKE personality (Dasha Bot).
 
-v4.0 UPDATES:
-- Multi-provider fallback: Local → GitHub Models → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+v5.0 UPDATES:
+- Pollinations auth (with API key) restricted to CHAT/FUNCTION routes only
+- COMMENT route uses Pollinations free tier only (preserves key quota)
+- Tested Pollinations models: openai (5/5), mistral (4/5), llama (4/5), deepseek (4/5)
+- Removed openai-fast (empty responses) and gemini (requires paid balance)
+- Route-based model selection for Pollinations auth
 - All providers are OpenAI-compatible (except local llama-cpp)
 - Automatic provider discovery — only configured providers (with API keys) are used
-- Response cleaning improved — handles thinking tags, markdown, decorative chars
 
 FALLBACK CHAIN:
   1. LOCAL:      RuadaptQwen3-4B (primary, no internet)
-  2. GITHUB:     GPT-4o-mini via PAT (free, best Russian quality)
-  3. GROQ:       Llama-3.3-70B (free, ULTRA FAST ~1s)
-  4. GEMINI:     Gemini-2.0-Flash (free, excellent Russian)
-  5. OPENROUTER: Llama-3.3-70B:free (free, many models)
-  6. CEREBRAS:   Llama-3.3-70B (free, ultra-fast ~0.3s)
-  7. POLLINATIONS: gpt-oss-20b (FREE, NO KEY NEEDED, always available)
+  2. GITHUB:     GPT-4.1-mini via PAT (free, best Russian quality)
+  3. HUGGINGFACE: Qwen2.5-7B (free, good Russian)
+  4. GROQ:       Llama-3.3-70B (free, ULTRA FAST ~1s)
+  5. GEMINI:     Gemini-2.0-Flash (free, excellent Russian)
+  6. OPENROUTER: Llama-3.3-70B:free (free, many models)
+  7. CEREBRAS:   Llama-3.3-70B (free, ultra-fast ~0.3s)
+  8. POLLINATIONS: openai/mistral/llama (AUTH for CHAT/FUNCTION, FREE for COMMENT)
+
+ROUTE STRATEGY:
+  CHAT     → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
+  COMMENT  → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (free only)
+  FUNCTION → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
 
 PERSONALITY:
 - Даша общается естественно, как живой человек. Не делает проблем из вопроса «ты бот?».
@@ -326,9 +335,11 @@ class AIRouter:
 
         # ── Log available providers ──
         available = [name for name, p in providers if p]
+        pollinations_status = "auth+free" if config.POLLINATIONS_API_KEY else "free-only"
         logger.info(
-            f"AI Router v4.0 initialized — "
-            f"providers: {' → '.join(available)}"
+            f"AI Router v5.0 initialized — "
+            f"providers: {' → '.join(available)} "
+            f"(Pollinations: {pollinations_status})"
         )
 
         # ── Create Provider Manager ──

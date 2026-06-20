@@ -1,41 +1,33 @@
-"""Pollinations AI Provider v3.0 — TESTED FREE MODELS for Dasha Bot.
+"""Pollinations AI Provider v4.0 — TESTED MODELS for Dasha Bot.
 
-COMPLETELY TESTED free models (June 2025):
+TESTED MODELS with API key (sk_Zi7ULzl8uWy8yOjFubmhYeJvwAdltpOs, June 2025):
 
-TRIPLE-ENDPOINT FALLBACK STRATEGY:
-  1. AUTH API: gen.pollinations.ai/v1 (if POLLINATIONS_API_KEY configured)
-     — 106 models (openai, mistral, deepseek, claude, gemini, llama, etc.)
-     — Requires Pollinations API key from enter.pollinations.ai
+  ✅ WORKING (tested, Russian quality rated):
+    - openai       → gpt-5.4-nano — BEST Russian (5/5), fast (~4s), great persona
+    - mistral      → mistral-small-2603 — Good Russian (4/5), fastest (~3.6s), structured
+    - deepseek     → deepseek-v4-flash — Good Russian (4/5), CoT reasoning (~4s)
+    - llama        → Llama-3.3-70B-Instruct — Good Russian (4/5), naturally mentions Abakan (~8s)
+    - qwen-coder   → Qwen3-Coder-30B-A3B — OK Russian (3/5), very slow (~26s)
 
+  ❌ NOT WORKING (tested, issues):
+    - openai-fast  → Empty responses (reasoning token leak, no visible output)
+    - gemini       → 402 PAYMENT_REQUIRED (insufficient Pollen balance)
+
+ROUTE-BASED STRATEGY:
+  - CHAT / FUNCTION: Use auth API with best models (openai → mistral → llama → deepseek)
+  - COMMENT: Skip auth API, use free tier only (to avoid wasting key quota on short replies)
+  - Free tier: always available as last resort (anonymous, no key needed)
+
+TRIPLE-ENDPOINT FALLBACK:
+  1. AUTH API: gen.pollinations.ai/v1 (if POLLINATIONS_API_KEY configured, CHAT/FUNCTION only)
   2. FREE JSON API: text.pollinations.ai/openai/chat/completions (ANONYMOUS)
-     — Model: openai (gpt-oss-20b reasoning, 20B params)
-     — Queue limit: 1 request per IP (MUST rate-limit 5+ seconds between requests)
-     — Speed: 5-10 seconds typical
-     — Russian quality: GOOD — natural language, proper grammar
-     — Tier: anonymous
-
   3. FREE PLAIN API: text.pollinations.ai/ (ANONYMOUS, plain text response)
-     — Same model, same queue limit
-     — Returns raw text (not JSON) — parse carefully
-     — Last resort if JSON endpoint fails
 
 RATE LIMITING (CRITICAL for anonymous tier):
   - Queue limit: 1 request per IP address
   - If queue is full: HTTP 429 error
   - Solution: minimum 5 seconds between ANY Pollinations request
   - We track last request time and enforce this globally
-
-TESTED & NOT FREE (require API keys):
-  - Google Gemini: requires AI Studio API key
-  - HuggingFace: requires HF_TOKEN
-  - OpenRouter: requires auth
-  - DeepSeek: requires API key
-  - Together AI: requires API key
-  - Cohere: requires API key
-  - Groq: requires API key
-  - Cloudflare Workers AI: requires account
-
-LOCAL MODEL IS PRIMARY. Pollinations is FALLBACK ONLY.
 """
 
 import asyncio
@@ -56,36 +48,58 @@ FREE_JSON_URL = "https://text.pollinations.ai/openai/chat/completions"
 FREE_PLAIN_URL = "https://text.pollinations.ai"
 
 # ── Models ──
-DEFAULT_MODEL = "openai"
-FREE_MODEL = "openai"  # Only model available on anonymous tier (gpt-oss-20b)
+FREE_MODEL = "openai"  # Model available on anonymous tier (gpt-oss-20b)
 
 # Models available on auth endpoint (gen.pollinations.ai with API key)
+# Ranked by TESTED Russian quality for Dasha bot.
+# NOTE: "openai-fast" removed — produces empty responses (reasoning token leak).
+# NOTE: "gemini" removed — requires paid balance (402 PAYMENT_REQUIRED).
 AUTH_CHAT_MODELS = [
-    "openai", "openai-fast", "openai-large",
-    "mistral", "mistral-large", "mistral-small-3.2",
-    "deepseek", "deepseek-pro",
-    "llama", "llama-maverick", "llama-scout",
-    "grok", "grok-large",
-    "claude", "claude-fast", "claude-large",
-    "gemini", "gemini-fast", "gemini-3-flash", "gemini-flash-lite-3.1", "gemini-large",
-    "qwen-coder", "qwen-coder-large", "qwen-large",
-    "polly", "kimi", "kimi-code",
-    "gemma", "gemma-fast",
+    # Best Russian quality, tested and working
+    "openai",              # gpt-5.4-nano — Best Russian (5/5), fast (~4s)
+    "mistral",             # mistral-small-2603 — Good Russian (4/5), fastest (~3.6s)
+    "llama",               # Llama-3.3-70B-Instruct — Good Russian (4/5), ~8s
+    "deepseek",            # deepseek-v4-flash — Good Russian (4/5), ~4s, CoT
+    # Additional models (not tested yet, may work)
+    "mistral-large",
+    "deepseek-pro",
+    "llama-maverick",
+    "qwen-coder",
+    "qwen-large",
+    "polly",
+    "kimi",
 ]
+
+# Best models for CHAT route (private messages — quality matters most)
+CHAT_MODELS = ["openai", "mistral", "llama", "deepseek"]
+
+# Best models for FUNCTION route (channel posts — quality + structured output)
+FUNCTION_MODELS = ["openai", "mistral", "deepseek", "llama"]
+
+# Simpler/faster models for COMMENT route (if auth is used — but normally skipped)
+COMMENT_MODELS = ["mistral", "openai"]
 
 IMAGE_MODELS = ["flux", "flux-pro", "flux-realism", "turbo"]
 
 # ── Rate limiting constants ──
-# CRITICAL: Anonymous tier allows only 1 request in queue per IP.
-# If we send a request while previous is still processing, we get HTTP 429.
-# Minimum interval between requests must be sufficient for model to finish
-# generation (typically 5-15 seconds). We use 5 seconds + jitter.
 MIN_REQUEST_INTERVAL = 5.0  # Minimum seconds between requests
 JITTER_RANGE = (0.0, 2.0)   # Random jitter to avoid periodic patterns
 
+# ── Model cooldown tracking ──
+# If a model returns 402/403, skip it for this many seconds
+_MODEL_COOLDOWN: Dict[str, float] = {}
+_MODEL_COOLDOWN_DURATION = 600  # 10 minutes
+
 
 class PollinationsProvider(BaseAIProvider):
-    """Pollinations AI provider — TRIPLE FALLBACK with tested free models."""
+    """Pollinations AI provider v4.0 — ROUTE-AWARE with tested models.
+
+    KEY DESIGN: Pollinations auth (with API key) is only used for CHAT and
+    FUNCTION routes (user dialogue and channel posting). For COMMENT route
+    (group chat replies), we skip the auth endpoint and go directly to the
+    free anonymous tier — this preserves key quota and is appropriate since
+    comments are short and don't need premium models.
+    """
 
     name = "pollinations"
 
@@ -97,6 +111,7 @@ class PollinationsProvider(BaseAIProvider):
         self._auth_success_count = 0
         self._last_request_time = 0.0
         self._queue_429_count = 0
+        self._last_auth_model = ""  # Track which auth model last succeeded
 
     async def is_available(self) -> bool:
         return True  # Always available (free anonymous tier)
@@ -111,25 +126,32 @@ class PollinationsProvider(BaseAIProvider):
     ) -> AIResponse:
         self._total_requests += 1
 
-        # ── CRITICAL: Rate limiting for anonymous tier ──
-        # Anonymous queue allows only 1 concurrent request per IP.
-        # We must wait for previous request to finish + buffer.
-        await self._wait_for_slot()
+        # Get route_type from kwargs (passed by ProviderManager)
+        route_type = kwargs.get("route_type", "chat")
 
+        # ── CRITICAL: Rate limiting for anonymous tier ──
+        await self._wait_for_slot()
         self._last_request_time = time.time()
 
-        # ── STRATEGY 1: AUTH API (if API key configured) ──
-        if self.api_key:
-            model = model or DEFAULT_MODEL
-            result = await self._chat_auth(messages, model, temperature, max_tokens, **kwargs)
+        # ── STRATEGY 1: AUTH API (if API key configured, CHAT/FUNCTION only) ──
+        # For COMMENT route, skip auth to preserve key quota — comments are short
+        # and don't need premium model quality. Free tier is sufficient.
+        if self.api_key and route_type in ("chat", "function", ""):
+            models_to_try = self._get_models_for_route(route_type)
+            result = await self._chat_auth_multi(
+                messages, models_to_try, temperature, max_tokens, **kwargs
+            )
             if result.ok:
                 self._fail_count = 0
                 self._auth_success_count += 1
                 return result
             # Auth failed — fall through to free API
-            logger.warning(f"Auth API failed ({result.error}), falling back to free")
+            logger.warning(f"Auth API failed for {route_type} route ({result.error}), falling back to free")
 
         # ── STRATEGY 2: FREE JSON API (anonymous, returns JSON) ──
+        await self._wait_for_slot()
+        self._last_request_time = time.time()
+
         result = await self._chat_free_json(messages, temperature, max_tokens, **kwargs)
         if result.ok:
             self._fail_count = 0
@@ -138,7 +160,6 @@ class PollinationsProvider(BaseAIProvider):
         logger.warning(f"Free JSON API failed ({result.error})")
 
         # ── STRATEGY 3: FREE PLAIN API (anonymous, returns plain text) ──
-        # Add extra delay since previous request might still be in queue
         await self._wait_for_slot()
         self._last_request_time = time.time()
 
@@ -150,6 +171,75 @@ class PollinationsProvider(BaseAIProvider):
 
         self._fail_count += 1
         return result
+
+    def _get_models_for_route(self, route_type: str) -> List[str]:
+        """Return model list for the given route, excluding cooled-down models."""
+        now = time.time()
+        if route_type == "function":
+            base_models = FUNCTION_MODELS
+        elif route_type == "comment":
+            base_models = COMMENT_MODELS
+        else:
+            base_models = CHAT_MODELS
+
+        # If we know the last successful auth model, try it first
+        if self._last_auth_model and self._last_auth_model in base_models:
+            base_models = [self._last_auth_model] + [m for m in base_models if m != self._last_auth_model]
+
+        # Filter out cooled-down models
+        available = [m for m in base_models if now >= _MODEL_COOLDOWN.get(m, 0)]
+        if not available:
+            # All in cooldown — try anyway (cooldown may have just expired)
+            available = base_models[:1]
+        return available
+
+    async def _chat_auth_multi(
+        self,
+        messages: List[Dict[str, str]],
+        models: List[str],
+        temperature: float,
+        max_tokens: int,
+        **kwargs,
+    ) -> AIResponse:
+        """Try multiple auth models in order until one succeeds."""
+        last_error = ""
+        for model in models:
+            # Check cooldown
+            now = time.time()
+            if now < _MODEL_COOLDOWN.get(model, 0):
+                continue
+
+            result = await self._chat_auth(messages, model, temperature, max_tokens, **kwargs)
+            if result.ok:
+                self._last_auth_model = model
+                return result
+
+            # Handle specific errors
+            error_str = str(result.error) if result.error else ""
+            if "402" in error_str or "PAYMENT_REQUIRED" in error_str:
+                # Model requires paid balance — cooldown for a while
+                _MODEL_COOLDOWN[model] = time.time() + _MODEL_COOLDOWN_DURATION
+                logger.warning(f"Pollinations model '{model}' requires paid balance, cooling down {_MODEL_COOLDOWN_DURATION}s")
+                continue
+            if "401" in error_str or "403" in error_str:
+                # Auth error — might be key issue, try next model
+                logger.warning(f"Pollinations model '{model}' auth error: {result.error}")
+                continue
+            if "429" in error_str:
+                # Rate limited — don't try more models, just return
+                return result
+            if "Empty" in error_str:
+                # Model returned empty (like openai-fast) — cooldown and try next
+                _MODEL_COOLDOWN[model] = time.time() + _MODEL_COOLDOWN_DURATION
+                logger.warning(f"Pollinations model '{model}' returned empty response, cooling down")
+                continue
+
+            last_error = error_str
+
+        return AIResponse(
+            text="", model=models[0] if models else "openai", provider="pollinations-auth",
+            error=f"All auth models failed (tried {len(models)}): {last_error}",
+        )
 
     async def _wait_for_slot(self) -> None:
         """Wait for the rate limit slot to be available.
@@ -175,7 +265,7 @@ class PollinationsProvider(BaseAIProvider):
     ) -> AIResponse:
         """Chat via AUTHENTICATED API (gen.pollinations.ai/v1).
 
-        Supports 106+ models with an API key from enter.pollinations.ai.
+        Supports multiple models with an API key from enter.pollinations.ai.
         """
         headers = {
             "Content-Type": "application/json",
@@ -204,7 +294,13 @@ class PollinationsProvider(BaseAIProvider):
                         text="", model=model, provider="pollinations-auth",
                         error="Rate limited (429)",
                     )
-                if response.status_code in (401, 402, 403):
+                if response.status_code == 402:
+                    _MODEL_COOLDOWN[model] = time.time() + _MODEL_COOLDOWN_DURATION
+                    return AIResponse(
+                        text="", model=model, provider="pollinations-auth",
+                        error=f"PAYMENT_REQUIRED (402) — model '{model}' requires paid balance",
+                    )
+                if response.status_code in (401, 403):
                     return AIResponse(
                         text="", model=model, provider="pollinations-auth",
                         error=f"Auth error ({response.status_code})",
@@ -421,6 +517,8 @@ class PollinationsProvider(BaseAIProvider):
         )
 
     def get_status(self) -> Dict:
+        now = time.time()
+        cooled_down = [m for m, t in _MODEL_COOLDOWN.items() if now < t]
         return {
             "status": "available",
             "total_requests": self._total_requests,
@@ -429,6 +527,8 @@ class PollinationsProvider(BaseAIProvider):
             "auth_success": self._auth_success_count,
             "queue_429_count": self._queue_429_count,
             "has_api_key": bool(self.api_key),
+            "last_auth_model": self._last_auth_model,
             "free_model": FREE_MODEL,
             "rate_limit_interval": MIN_REQUEST_INTERVAL,
+            "cooled_down_models": cooled_down,
         }

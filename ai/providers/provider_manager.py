@@ -1,26 +1,31 @@
-"""Provider Manager v4.0 — MULTI-PROVIDER FALLBACK for Dasha Bot.
+"""Provider Manager v5.0 — MULTI-PROVIDER FALLBACK for Dasha Bot.
 
 COMPLETE FALLBACK CHAIN (tested & integrated):
   1. LOCAL:        RuadaptQwen3-4B (primary, no internet needed) — CHAT/FUNCTION only
-  2. GITHUB:       GitHub Models via PAT (free, GPT-4o-mini)
+  2. GITHUB:       GitHub Models via PAT (free, GPT-4.1-mini)
   3. HUGGINGFACE:  HF Inference via HF_TOKEN (free, Qwen2.5/Llama-3.1/Mistral)
   4. GROQ:         Groq free tier (free, ULTRA FAST Llama-3.3-70B)
   5. GEMINI:       Google Gemini free (free, Gemini-2.0-Flash)
   6. OPENROUTER:   OpenRouter free models (free, 20+ models)
   7. CEREBRAS:     Cerebras free tier (free, ultra-fast Llama-3.3-70B)
-  8. POLLINATIONS: Pollinations free (NO KEY NEEDED, always available)
+  8. POLLINATIONS: Pollinations (with API key for CHAT/FUNCTION, free for COMMENT)
 
 NOTE: Local model is BYPASSED for COMMENT route (group messages) because it
 takes ~85s per response — too slow for real-time chat. See LOCAL_FOR_COMMENTS.
+
+NOTE: Pollinations auth (with API key) is only used for CHAT and FUNCTION routes.
+For COMMENT route, Pollinations skips auth and uses the free anonymous tier.
+This preserves the API key quota for high-quality responses in private chats
+and channel posts where quality matters most.
 
 All providers are OpenAI-compatible except local (llama-cpp).
 Each provider is only tried if it has an API key configured.
 Pollinations is always available as absolute last resort.
 
 ROUTE STRATEGY:
-  CHAT     → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
-  COMMENT  → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (NO local)
-  FUNCTION → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+  CHAT     → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
+  COMMENT  → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (free only, NO local, NO auth)
+  FUNCTION → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
 """
 
 from __future__ import annotations
@@ -176,7 +181,11 @@ class ProviderManager:
         messages: List[Dict[str, str]],
         **kwargs: Any,
     ) -> AIResponse:
-        """Try a single provider, return result (ok or error)."""
+        """Try a single provider, return result (ok or error).
+
+        Passes route_type to providers that support it (e.g. Pollinations
+        uses it to decide whether to use auth or free tier).
+        """
         try:
             available = await provider.is_available()
         except Exception:
@@ -190,6 +199,7 @@ class ProviderManager:
             )
 
         try:
+            # Pass route_type to providers that support it (e.g. Pollinations)
             result = await provider.chat(messages=messages, **kwargs)
             if result.ok:
                 self._count(name)
