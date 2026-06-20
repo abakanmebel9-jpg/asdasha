@@ -209,19 +209,17 @@ class ChannelManager:
             logger.info("Post too similar to recent post, skipping")
             return False
 
-        # Try to send with image
+        # Try to send with image(s)
         sent = False
-        image_url = ""
         if item.get("image_urls"):
-            image_url = item["image_urls"][0]
             try:
-                sent = await self._send_with_image(
+                sent = await self._send_with_images(
                     chat_id=config.CHANNEL_ID,
                     text=post_text,
-                    image_url=image_url,
+                    image_urls=item["image_urls"],
                 )
             except Exception as e:
-                logger.warning(f"Failed to send with image: {e}")
+                logger.warning(f"Failed to send with image(s): {e}")
 
         # Fallback: text only
         if not sent:
@@ -259,8 +257,15 @@ class ChannelManager:
 
         return False
 
-    async def post_ai_generated(self, topic: str = "") -> bool:
-        """Generate and post AI content without a news source."""
+    async def post_ai_generated(self, topic: str = "", image_urls: Optional[List[str]] = None) -> bool:
+        """Generate and post AI content without a news source.
+
+        Args:
+            topic: Topic for the AI to write about. If empty, a random
+                   furniture design topic is chosen.
+            image_urls: Optional list of image URLs (1–10) to attach.
+                        If provided, the post is sent as a media message.
+        """
         if not self._bot:
             return False
 
@@ -325,27 +330,58 @@ class ChannelManager:
             post_text = re.sub(pattern, "", post_text, flags=re.MULTILINE | re.IGNORECASE)
         post_text = re.sub(r'\n{3,}', '\n\n', post_text).strip()
 
-        post_text = _build_post_with_footer(post_text, has_media=False)
+        has_media = bool(image_urls)
+        post_text = _build_post_with_footer(post_text, has_media=has_media)
 
         # Final safety check
-        if len(post_text) > TELEGRAM_TEXT_LIMIT:
-            post_text = post_text[:TELEGRAM_TEXT_LIMIT - 3] + "…"
-
-        try:
-            msg = await self._bot.send_message(
-                chat_id=config.CHANNEL_ID,
-                text=post_text,
-                disable_notification=True,
+        final_limit = TELEGRAM_MEDIA_TEXT_LIMIT if has_media else TELEGRAM_TEXT_LIMIT
+        if len(post_text) > final_limit:
+            logger.warning(
+                f"AI post still too long after truncation: {len(post_text)} > {final_limit}, "
+                f"force truncating"
             )
+            post_text = post_text[:final_limit - 3] + "…"
+
+        # Try to send with image(s) if provided
+        sent = False
+        if image_urls:
+            try:
+                sent = await self._send_with_images(
+                    chat_id=config.CHANNEL_ID,
+                    text=post_text,
+                    image_urls=image_urls,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send AI post with image(s): {e}")
+
+        # Fallback: text only
+        if not sent:
+            try:
+                # If post was prepared for media (1024 limit) but we're sending
+                # text-only (4096 limit), rebuild with the larger limit
+                if has_media:
+                    body = _strip_footer(post_text)
+                    post_text = _build_post_with_footer(body, has_media=False)
+                msg = await self._bot.send_message(
+                    chat_id=config.CHANNEL_ID,
+                    text=post_text,
+                    disable_notification=True,
+                )
+                sent = True
+                logger.info(f"AI text-only post sent: msg_id={msg.message_id}")
+            except Exception as e:
+                logger.error(f"Failed to send AI post: {e}")
+                return False
+
+        if sent:
             await add_channel_post(
-                content=post_text, message_id=msg.message_id,
+                content=post_text, message_id=0,
                 post_type="ai_generated", source_url="",
             )
             logger.info(f"AI post published: {topic[:40]}")
             return True
-        except Exception as e:
-            logger.error(f"Failed to send AI post: {e}")
-            return False
+
+        return False
 
     async def _send_with_image(
         self, chat_id: str, text: str, image_url: str,
@@ -407,6 +443,110 @@ class ChannelManager:
         except Exception as e:
             logger.warning(f"Image download/send failed: {e}")
             return False
+
+    async def _send_with_images(
+        self, chat_id: str, text: str, image_urls: List[str],
+    ) -> bool:
+        """Send a post with one or more images.
+
+        For 1 image: uses send_photo (simple, reliable).
+        For 2-10 images: uses send_media_group (album layout).
+        Caption is attached to the first image only (Telegram limit: 1024 chars).
+
+        NOTE: `text` must already include the footer (built by
+        _build_post_with_footer). This method does NOT re-append the footer
+        to avoid duplication. If the text exceeds the media caption limit,
+        the body is re-truncated while preserving exactly one footer.
+        """
+        if not self._bot or not image_urls:
+            return False
+
+        # Ensure caption fits media limit
+        if len(text) > TELEGRAM_MEDIA_TEXT_LIMIT:
+            body = _strip_footer(text)
+            text = _build_post_with_footer(body, has_media=True)
+
+        import httpx
+        import tempfile
+        import os
+
+        # Download images
+        downloaded = []
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                for i, url in enumerate(image_urls[:10]):
+                    try:
+                        img_response = await client.get(url)
+                        if img_response.status_code != 200:
+                            logger.warning(f"Image {i+1} download failed: HTTP {img_response.status_code}")
+                            continue
+
+                        content_type = img_response.headers.get("content-type", "")
+                        ext = ".jpg"
+                        if "png" in content_type:
+                            ext = ".png"
+                        elif "webp" in content_type:
+                            ext = ".webp"
+
+                        img_path = os.path.join(tmp_dir, f"post_img_{i}{ext}")
+                        with open(img_path, "wb") as f:
+                            f.write(img_response.content)
+                        downloaded.append(img_path)
+                    except Exception as e:
+                        logger.warning(f"Image {i+1} download error: {e}")
+                        continue
+
+            if not downloaded:
+                logger.warning("No images downloaded successfully")
+                return False
+
+            # Single image — use send_photo
+            if len(downloaded) == 1:
+                photo = FSInputFile(downloaded[0])
+                await self._bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo,
+                    caption=text,
+                    disable_notification=True,
+                )
+            else:
+                # Multiple images — use send_media_group (album)
+                media = []
+                for i, img_path in enumerate(downloaded):
+                    photo = FSInputFile(img_path)
+                    if i == 0:
+                        # Caption only on first photo
+                        media.append(InputMediaPhoto(
+                            media=photo,
+                            caption=text,
+                        ))
+                    else:
+                        media.append(InputMediaPhoto(media=photo))
+
+                await self._bot.send_media_group(
+                    chat_id=chat_id,
+                    media=media,
+                    disable_notification=True,
+                )
+
+            logger.info(f"Post with {len(downloaded)} image(s) sent successfully")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Image download/send failed: {e}")
+            return False
+        finally:
+            # Cleanup temp files
+            for img_path in downloaded:
+                try:
+                    os.unlink(img_path)
+                except Exception:
+                    pass
+            try:
+                os.rmdir(tmp_dir)
+            except Exception:
+                pass
 
     async def _is_recent_fingerprint(self, fingerprint: str) -> bool:
         """Check if a similar post was recently published."""

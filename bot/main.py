@@ -313,7 +313,7 @@ async def main():
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    logger.info("=== Dasha Bot Starting — MULTI-PROVIDER FALLBACK v5.0 — @asdasha_bot ===")
+    logger.info("=== Dasha Bot Starting — MULTI-PROVIDER FALLBACK v5.3 — @asdasha_bot ===")
     local_status = "enabled" if config.ENABLE_LOCAL_MODEL else "disabled"
 
     # Log configured cloud providers

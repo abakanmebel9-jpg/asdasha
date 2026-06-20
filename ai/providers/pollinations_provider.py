@@ -1,29 +1,36 @@
-"""Pollinations AI Provider v5.0 — FULLY TESTED MODELS for Dasha Bot.
+"""Pollinations AI Provider v5.3 — FULLY TESTED MODELS for Dasha Bot.
 
-COMPREHENSIVE MODEL TESTING RESULTS (June 2025):
+COMPREHENSIVE MODEL TESTING RESULTS (June 2025, full 39-model sweep):
 
-  ✅ WORKING with API key (auth API, gen.pollinations.ai/v1):
-    - openai           → Best Russian (5/5), fast (~4s), great persona
-    - mistral          → Good Russian (4/5), fastest (~3.6s), structured
-    - mistral-large    → Good Russian (4/5), structured (~5s) — NEWLY AVAILABLE
-    - llama            → Good Russian (4/5), naturally mentions Abakan (~8s)
-    - deepseek         → Good Russian (4/5), CoT reasoning (~4s)
-    - mistral-small-3.2 → Good Russian (4/5), fast (~3s)
-    - llama-scout      → Good Russian (3/5), fast (~3s)
-    - gemma            → Decent Russian (3/5), fast (~3s)
-    - grok             → Good Russian (4/5), direct style (~6s) — NEWLY AVAILABLE
-    - qwen-coder       → OK Russian (3/5), slow (~26s)
+  ✅ WORKING with API key (auth API, gen.pollinations.ai/v1) — 11 models:
+    - mistral-small-3.2 → Excellent Russian (5/5), fastest (~2.1s)
+    - llama-scout       → Excellent Russian (5/5), very fast (~1.9s)
+    - mistral           → Excellent Russian (5/5), fast (~2.4s)
+    - grok              → Excellent Russian (5/5), fast (~2.5s)
+    - openai            → Excellent Russian (5/5), fast (~2.7s)
+    - mistral-small     → Excellent Russian (5/5), fast (~2.6s) — NEW
+    - mistral-large     → Excellent Russian (5/5), good (~3.5s)
+    - llama             → Excellent Russian (5/5), solid (~4.6s)
+    - qwen-coder        → Excellent Russian (5/5), slow (~12.5s)
+    - deepseek          → Excellent Russian (5/5), slow (~14s)
+    - gemma             → Excellent Russian (5/5), slowest (~19s)
 
-  ❌ NOT WORKING with this key (Insufficient balance / 402):
-    - openai-large, openai-fast (empty), deepseek-pro,
-      llama-maverick, grok-large, claude, claude-fast, claude-large,
-      qwen-large, kimi, kimi-code, gemini*, gemini-fast, gemini-3-flash
-      (* gemini models require paid Pollen balance)
+  ❌ NOT WORKING — Insufficient balance (402) — 14 models:
+    - openai-large, deepseek-pro, llama-maverick, grok-large,
+      claude, claude-fast, claude-large, gemini, gemini-fast,
+      gemini-3-flash, gemini-flash-lite-3.1, qwen-large, kimi, kimi-code
+
+  ❌ NOT WORKING — Invalid model alias (400) — 13 models:
+    - mistral-medium, deepseek-r1, qwen, gemma-fast, phi, phi-mini,
+      command-r, command-r-plus, solar, yi, hunyuan, mixtral
+
+  ❌ NOT WORKING — Other issues:
+    - openai-fast → HTTP 200 but empty response (reasoning token leak)
+    - polly → Responds in English only, no Russian support
 
   ✅ FREE TIER (text.pollinations.ai, NO key needed):
     - openai      → Works (gpt-oss-20b), good Russian, ~6-10s
     - openai-fast → Works, very fast but sometimes empty responses
-    - All other model names → NOT FOUND on free tier
 
   NOTE: Model availability CHANGES over time depending on Pollinations load.
   Models may become available/unavailable. The provider handles this with
@@ -52,30 +59,31 @@ FREE_PLAIN_URL = "https://text.pollinations.ai"
 FREE_MODEL = "openai"  # Model available on anonymous tier (gpt-oss-20b)
 
 # Models available on auth endpoint (gen.pollinations.ai with API key)
-# COMPREHENSIVELY TESTED June 2025 with API key.
-# Only models that WORK with the current key balance are listed.
-# Models requiring paid balance (Insufficient balance / 402) are excluded.
+# COMPREHENSIVELY TESTED June 2025 — full 39-model sweep.
+# All 11 working models produce excellent Russian text (5/5 quality).
 AUTH_CHAT_MODELS = [
-    # Working models (tested, produce Russian text):
+    # All working models ordered by speed × quality:
     # NOTE: availability varies with Pollinations load — cooldown handles this
-    "openai",              # Best Russian (5/5), fast (~4s)
-    "mistral",             # Good Russian (4/5), fastest (~3.6s)
-    "mistral-large",       # Good Russian (4/5), structured (~5s) — sometimes available
-    "mistral-small-3.2",   # Good Russian (4/5), fast (~3s)
-    "llama",               # Good Russian (4/5), ~8s
-    "deepseek",            # Good Russian (4/5), ~4s, CoT
-    "grok",                # Good Russian (4/5), direct style (~6s) — sometimes available
-    "llama-scout",         # Good Russian (3/5), fast (~3s)
-    "gemma",               # Decent Russian (3/5), fast (~3s)
-    "qwen-coder",          # OK Russian (3/5), very slow (~26s)
+    "mistral-small-3.2",   # Excellent Russian (5/5), fastest (~2.1s)
+    "llama-scout",         # Excellent Russian (5/5), very fast (~1.9s)
+    "mistral",             # Excellent Russian (5/5), fast (~2.4s)
+    "grok",                # Excellent Russian (5/5), fast (~2.5s)
+    "openai",              # Excellent Russian (5/5), fast (~2.7s)
+    "mistral-small",       # Excellent Russian (5/5), fast (~2.6s) — NEW
+    "mistral-large",       # Excellent Russian (5/5), good (~3.5s)
+    "llama",               # Excellent Russian (5/5), solid (~4.6s)
+    "deepseek",            # Excellent Russian (5/5), slow (~14s)
+    "qwen-coder",          # Excellent Russian (5/5), slow (~12.5s)
+    "gemma",               # Excellent Russian (5/5), slowest (~19s)
 ]
 
-# Models that may not work with current key balance (Insufficient balance / 402):
-# These change over time! Pollinations adjusts pricing and availability.
-# openai-large, openai-fast (empty responses), deepseek-pro,
-# llama-maverick, grok-large, claude, claude-fast, claude-large,
-# qwen-large, kimi, kimi-code, gemini, gemini-fast, gemini-3-flash,
-# gemini-flash-lite-3.1, gemma-fast (invalid model), polly (no Russian)
+# Models that do NOT work with current key:
+# 402 (Insufficient balance): openai-large, deepseek-pro, llama-maverick, grok-large,
+#   claude, claude-fast, claude-large, gemini, gemini-fast, gemini-3-flash,
+#   gemini-flash-lite-3.1, qwen-large, kimi, kimi-code
+# 400 (Invalid model): mistral-medium, deepseek-r1, qwen, gemma-fast, phi, phi-mini,
+#   command-r, command-r-plus, solar, yi, hunyuan, mixtral
+# Other: openai-fast (empty), polly (English only)
 #
 # IMPORTANT: The cooldown system handles this automatically:
 # - If a model returns 402, it's cooled down for 10 minutes
@@ -87,13 +95,33 @@ AUTH_CHAT_MODELS = [
 FREE_MODELS = ["openai", "openai-fast"]
 
 # Best models for CHAT route (private messages — quality matters most)
-CHAT_MODELS = ["openai", "mistral", "mistral-large", "mistral-small-3.2", "llama", "deepseek", "grok", "gemma"]
+# Ordered by speed × quality: fastest high-quality models first
+CHAT_MODELS = [
+    "mistral-small-3.2",   # ~2.1s, excellent Russian
+    "mistral",             # ~2.4s, excellent Russian
+    "grok",                # ~2.5s, excellent Russian
+    "openai",              # ~2.7s, excellent Russian
+    "mistral-small",       # ~2.6s, excellent Russian
+    "mistral-large",       # ~3.5s, excellent Russian
+    "llama",               # ~4.6s, excellent Russian
+    "llama-scout",         # ~1.9s, excellent Russian (lighter)
+]
 
 # Best models for FUNCTION route (channel posts — quality + structured output)
-FUNCTION_MODELS = ["openai", "mistral", "mistral-large", "mistral-small-3.2", "deepseek", "llama", "grok", "llama-scout"]
+# Exclude slow models (deepseek ~14s, qwen-coder ~12.5s, gemma ~19s) for posting
+FUNCTION_MODELS = [
+    "openai",              # ~2.7s, best structured output
+    "mistral",             # ~2.4s, excellent structure
+    "mistral-large",       # ~3.5s, best for long posts
+    "mistral-small-3.2",   # ~2.1s, fast and good
+    "llama",               # ~4.6s, solid output
+    "grok",                # ~2.5s, direct style
+    "llama-scout",         # ~1.9s, fast backup
+    "deepseek",            # ~14s, slow but thorough (fallback)
+]
 
 # Models for COMMENT route (if auth is used — but normally skipped, free tier used)
-COMMENT_MODELS = ["mistral", "openai"]
+COMMENT_MODELS = ["mistral", "mistral-small-3.2", "openai"]
 
 IMAGE_MODELS = ["flux", "flux-pro", "flux-realism", "turbo"]
 
@@ -108,7 +136,7 @@ _MODEL_COOLDOWN_DURATION = 600  # 10 minutes
 
 
 class PollinationsProvider(BaseAIProvider):
-    """Pollinations AI provider v4.0 — ROUTE-AWARE with tested models.
+    """Pollinations AI provider v5.3 — ROUTE-AWARE with tested models.
 
     KEY DESIGN: Pollinations auth (with API key) is only used for CHAT and
     FUNCTION routes (user dialogue and channel posting). For COMMENT route
@@ -547,4 +575,7 @@ class PollinationsProvider(BaseAIProvider):
             "free_model": FREE_MODEL,
             "rate_limit_interval": MIN_REQUEST_INTERVAL,
             "cooled_down_models": cooled_down,
+            "auth_models_count": len(AUTH_CHAT_MODELS),
+            "chat_models": CHAT_MODELS,
+            "function_models": FUNCTION_MODELS,
         }

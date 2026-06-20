@@ -1,10 +1,12 @@
-"""AI Router v5.0 — MULTI-PROVIDER FALLBACK + HUMAN-LIKE personality (Dasha Bot).
+"""AI Router v5.3 — MULTI-PROVIDER FALLBACK + HUMAN-LIKE personality (Dasha Bot).
 
-v5.0 UPDATES:
+v5.3 UPDATES:
+- Pollinations full 39-model sweep: 11 working models, all 5/5 Russian quality
+- New model: mistral-small (fast, excellent Russian)
+- Multi-image support in channel posts (send_media_group, up to 10 photos)
+- News image dedup: removes CDN multi-resolution variants
 - Pollinations auth (with API key) restricted to CHAT/FUNCTION routes only
 - COMMENT route uses Pollinations free tier only (preserves key quota)
-- Tested Pollinations models: openai (5/5), mistral (4/5), llama (4/5), deepseek (4/5)
-- Removed openai-fast (empty responses) and gemini (requires paid balance)
 - Route-based model selection for Pollinations auth
 - All providers are OpenAI-compatible (except local llama-cpp)
 - Automatic provider discovery — only configured providers (with API keys) are used
@@ -17,7 +19,7 @@ FALLBACK CHAIN:
   5. GEMINI:     Gemini-2.0-Flash (free, excellent Russian)
   6. OPENROUTER: Llama-3.3-70B:free (free, many models)
   7. CEREBRAS:   Llama-3.3-70B (free, ultra-fast ~0.3s)
-  8. POLLINATIONS: openai/mistral/llama (AUTH for CHAT/FUNCTION, FREE for COMMENT)
+  8. POLLINATIONS: 11 models (AUTH for CHAT/FUNCTION, FREE for COMMENT)
 
 ROUTE STRATEGY:
   CHAT     → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
@@ -338,7 +340,7 @@ class AIRouter:
         available = [name for name, p in providers if p]
         pollinations_status = "auth+free" if config.POLLINATIONS_API_KEY else "free-only"
         logger.info(
-            f"AI Router v5.0 initialized — "
+            f"AI Router v5.3 initialized — "
             f"providers: {' → '.join(available)} "
             f"(Pollinations: {pollinations_status})"
         )

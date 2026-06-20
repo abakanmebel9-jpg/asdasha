@@ -1,7 +1,7 @@
-name: Dasha Bot — MULTI-PROVIDER v5.0 — Даша Дизайнер Мебели
+name: Dasha Bot — MULTI-PROVIDER v5.3 — Даша Дизайнер Мебели
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Dasha Bot v5.0 — MULTI-PROVIDER FALLBACK
+# Dasha Bot v5.3 — MULTI-PROVIDER FALLBACK
 #
 #   FAILOVER CHAIN:
 #     Local (RuadaptQwen3-4B) → GitHub Models → HuggingFace → Groq →
@@ -13,7 +13,8 @@ name: Dasha Bot — MULTI-PROVIDER v5.0 — Даша Дизайнер Мебел
 #
 #   - LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (~2.5GB GGUF, CPU)
 #   - 6 CLOUD PROVIDERS: all free, all OpenAI-compatible
-#   - Pollinations: auth for CHAT/FUNCTION, free for COMMENT
+#   - Pollinations: 11 models tested (auth for CHAT/FUNCTION, free for COMMENT)
+#   - Multi-image support: send_media_group up to 10 photos per post
 #   - libopenblas-dev for fast CPU inference
 #
 # SECRETS NEEDED (add in GitHub repo Settings → Secrets):
@@ -259,10 +260,11 @@ jobs:
           GROUP_REACTION_PROBABILITY: "0.35"
           GROUP_IGNORE_BOTS: "true"
         run: |
-          echo "=== Starting Dasha Bot v5.0 — MULTI-PROVIDER FALLBACK ==="
+          echo "=== Starting Dasha Bot v5.3 — MULTI-PROVIDER FALLBACK ==="
           echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY for chat/channel)"
           echo "CLOUD FALLBACK: GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations"
-          echo "POLLINATIONS: Auth API for CHAT/FUNCTION, Free API for COMMENT"
+          echo "POLLINATIONS: 11 auth models for CHAT/FUNCTION, Free API for COMMENT"
+          echo "MULTI-IMAGE: send_media_group support (up to 10 photos per post)"
           echo "GROUP COMMENTS: cloud-only (local bypassed for speed, ~18s vs ~85s)"
           echo "CHANNEL: @abakan_mebel (2 posts/hour, every 30 min)"
           echo "FOOTER: Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online (single, no duplication)"

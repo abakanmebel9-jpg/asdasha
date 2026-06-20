@@ -138,19 +138,24 @@ def _normalize_news_item(item: Dict) -> Optional[Dict]:
         if isinstance(val, list):
             for img in val:
                 if isinstance(img, str) and img.startswith("http"):
-                    image_urls.append(html_unescape(html_unescape(img)))
+                    image_urls.append(html_unescape(img))
 
     single_image = item.get("image", "") or item.get("thumbnail", "")
     if single_image:
         if isinstance(single_image, str) and single_image.startswith("http"):
-            image_urls.insert(0, html_unescape(html_unescape(single_image)))
+            image_urls.insert(0, html_unescape(single_image))
 
+    # Dedup: strip query strings AND CDN size suffixes (e.g. -1280-80, -1920-80)
+    # This prevents sending multi-resolution variants of the same photo
     seen = set()
     unique_images = []
     for img_url in image_urls:
         base_url = img_url.split('?')[0]
-        if base_url not in seen:
-            seen.add(base_url)
+        # Normalize CDN size suffixes: -1280-80.png, -1920-80.png, -1600-80.png, etc.
+        # Remove the size pattern to get a canonical key for dedup
+        canonical = re.sub(r'-\d+-\d+(?=\.\w+$)', '', base_url)
+        if canonical not in seen:
+            seen.add(canonical)
             unique_images.append(img_url)
 
     lang = item.get("lang", "") or _detect_language(title)
