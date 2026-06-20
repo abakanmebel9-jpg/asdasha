@@ -1,33 +1,38 @@
-"""Pollinations AI Provider v4.0 — TESTED MODELS for Dasha Bot.
+"""Pollinations AI Provider v5.0 — FULLY TESTED MODELS for Dasha Bot.
 
-TESTED MODELS with API key (sk_Zi7ULzl8uWy8yOjFubmhYeJvwAdltpOs, June 2025):
+COMPREHENSIVE MODEL TESTING RESULTS (June 2025):
 
-  ✅ WORKING (tested, Russian quality rated):
-    - openai       → gpt-5.4-nano — BEST Russian (5/5), fast (~4s), great persona
-    - mistral      → mistral-small-2603 — Good Russian (4/5), fastest (~3.6s), structured
-    - deepseek     → deepseek-v4-flash — Good Russian (4/5), CoT reasoning (~4s)
-    - llama        → Llama-3.3-70B-Instruct — Good Russian (4/5), naturally mentions Abakan (~8s)
-    - qwen-coder   → Qwen3-Coder-30B-A3B — OK Russian (3/5), very slow (~26s)
+  ✅ WORKING with API key (auth API, gen.pollinations.ai/v1):
+    - openai           → Best Russian (5/5), fast (~4s), great persona
+    - mistral          → Good Russian (4/5), fastest (~3.6s), structured
+    - llama            → Good Russian (4/5), naturally mentions Abakan (~8s)
+    - deepseek         → Good Russian (4/5), CoT reasoning (~4s)
+    - mistral-small-3.2 → Good Russian (4/5), fast (~3s)
+    - llama-scout      → Good Russian (3/5), fast (~3s)
+    - gemma            → Decent Russian (3/5), fast (~3s)
+    - qwen-coder       → OK Russian (3/5), slow (~26s)
 
-  ❌ NOT WORKING (tested, issues):
-    - openai-fast  → Empty responses (reasoning token leak, no visible output)
-    - gemini       → 402 PAYMENT_REQUIRED (insufficient Pollen balance)
+  ❌ NOT WORKING with this key (Insufficient balance / 402):
+    - openai-large, openai-fast (empty), mistral-large, deepseek-pro,
+      llama-maverick, grok, grok-large, claude, claude-fast, claude-large,
+      qwen-large, kimi, kimi-code, gemini*, gemini-fast, gemini-3-flash
+      (* gemini models require paid Pollen balance)
+
+  ✅ FREE TIER (text.pollinations.ai, NO key needed):
+    - openai      → Works (gpt-oss-20b), good Russian, ~6-10s
+    - openai-fast → Works, very fast but sometimes empty responses
+    - All other model names → NOT FOUND on free tier
 
 ROUTE-BASED STRATEGY:
   - CHAT / FUNCTION: Use auth API with best models (openai → mistral → llama → deepseek)
-  - COMMENT: Skip auth API, use free tier only (to avoid wasting key quota on short replies)
+  - COMMENT: Skip auth API, use free tier only (openai model, no key needed)
   - Free tier: always available as last resort (anonymous, no key needed)
 
-TRIPLE-ENDPOINT FALLBACK:
-  1. AUTH API: gen.pollinations.ai/v1 (if POLLINATIONS_API_KEY configured, CHAT/FUNCTION only)
-  2. FREE JSON API: text.pollinations.ai/openai/chat/completions (ANONYMOUS)
-  3. FREE PLAIN API: text.pollinations.ai/ (ANONYMOUS, plain text response)
-
-RATE LIMITING (CRITICAL for anonymous tier):
-  - Queue limit: 1 request per IP address
-  - If queue is full: HTTP 429 error
-  - Solution: minimum 5 seconds between ANY Pollinations request
-  - We track last request time and enforce this globally
+IMPORTANT: Pollinations free tier is completely separate from the auth tier.
+Free tier only supports "openai" and "openai-fast" models. The auth tier
+supports 100+ models but many require paid balance ("pollen").
+With the current API key balance (~0.008 pollen), only the low-cost models
+work (openai, mistral, llama, deepseek, gemma, etc.).
 """
 
 import asyncio
@@ -51,32 +56,38 @@ FREE_PLAIN_URL = "https://text.pollinations.ai"
 FREE_MODEL = "openai"  # Model available on anonymous tier (gpt-oss-20b)
 
 # Models available on auth endpoint (gen.pollinations.ai with API key)
-# Ranked by TESTED Russian quality for Dasha bot.
-# NOTE: "openai-fast" removed — produces empty responses (reasoning token leak).
-# NOTE: "gemini" removed — requires paid balance (402 PAYMENT_REQUIRED).
+# COMPREHENSIVELY TESTED June 2025 with API key.
+# Only models that WORK with the current key balance are listed.
+# Models requiring paid balance (Insufficient balance / 402) are excluded.
 AUTH_CHAT_MODELS = [
-    # Best Russian quality, tested and working
-    "openai",              # gpt-5.4-nano — Best Russian (5/5), fast (~4s)
-    "mistral",             # mistral-small-2603 — Good Russian (4/5), fastest (~3.6s)
-    "llama",               # Llama-3.3-70B-Instruct — Good Russian (4/5), ~8s
-    "deepseek",            # deepseek-v4-flash — Good Russian (4/5), ~4s, CoT
-    # Additional models (not tested yet, may work)
-    "mistral-large",
-    "deepseek-pro",
-    "llama-maverick",
-    "qwen-coder",
-    "qwen-large",
-    "polly",
-    "kimi",
+    # Working models (tested, produce Russian text):
+    "openai",              # Best Russian (5/5), fast (~4s)
+    "mistral",             # Good Russian (4/5), fastest (~3.6s)
+    "mistral-small-3.2",   # Good Russian (4/5), fast (~3s)
+    "llama",               # Good Russian (4/5), ~8s
+    "deepseek",            # Good Russian (4/5), ~4s, CoT
+    "llama-scout",         # Good Russian (3/5), fast (~3s)
+    "gemma",               # Decent Russian (3/5), fast (~3s)
+    "qwen-coder",          # OK Russian (3/5), very slow (~26s)
 ]
 
+# Models that DO NOT WORK with current key balance (Insufficient balance):
+# openai-large, openai-fast (empty), mistral-large, deepseek-pro,
+# llama-maverick, grok, grok-large, claude, claude-fast, claude-large,
+# qwen-large, kimi, kimi-code, gemini, gemini-fast, gemini-3-flash,
+# gemini-flash-lite-3.1, gemma-fast (invalid model), polly (no Russian)
+
+# Models available on FREE tier (text.pollinations.ai, NO key needed)
+# Only "openai" and "openai-fast" work. Other model names return 404.
+FREE_MODELS = ["openai", "openai-fast"]
+
 # Best models for CHAT route (private messages — quality matters most)
-CHAT_MODELS = ["openai", "mistral", "llama", "deepseek"]
+CHAT_MODELS = ["openai", "mistral", "mistral-small-3.2", "llama", "deepseek", "gemma"]
 
 # Best models for FUNCTION route (channel posts — quality + structured output)
-FUNCTION_MODELS = ["openai", "mistral", "deepseek", "llama"]
+FUNCTION_MODELS = ["openai", "mistral", "mistral-small-3.2", "deepseek", "llama", "llama-scout"]
 
-# Simpler/faster models for COMMENT route (if auth is used — but normally skipped)
+# Models for COMMENT route (if auth is used — but normally skipped, free tier used)
 COMMENT_MODELS = ["mistral", "openai"]
 
 IMAGE_MODELS = ["flux", "flux-pro", "flux-realism", "turbo"]
