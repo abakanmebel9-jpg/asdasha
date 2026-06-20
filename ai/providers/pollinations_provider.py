@@ -5,16 +5,18 @@ COMPREHENSIVE MODEL TESTING RESULTS (June 2025):
   ✅ WORKING with API key (auth API, gen.pollinations.ai/v1):
     - openai           → Best Russian (5/5), fast (~4s), great persona
     - mistral          → Good Russian (4/5), fastest (~3.6s), structured
+    - mistral-large    → Good Russian (4/5), structured (~5s) — NEWLY AVAILABLE
     - llama            → Good Russian (4/5), naturally mentions Abakan (~8s)
     - deepseek         → Good Russian (4/5), CoT reasoning (~4s)
     - mistral-small-3.2 → Good Russian (4/5), fast (~3s)
     - llama-scout      → Good Russian (3/5), fast (~3s)
     - gemma            → Decent Russian (3/5), fast (~3s)
+    - grok             → Good Russian (4/5), direct style (~6s) — NEWLY AVAILABLE
     - qwen-coder       → OK Russian (3/5), slow (~26s)
 
   ❌ NOT WORKING with this key (Insufficient balance / 402):
-    - openai-large, openai-fast (empty), mistral-large, deepseek-pro,
-      llama-maverick, grok, grok-large, claude, claude-fast, claude-large,
+    - openai-large, openai-fast (empty), deepseek-pro,
+      llama-maverick, grok-large, claude, claude-fast, claude-large,
       qwen-large, kimi, kimi-code, gemini*, gemini-fast, gemini-3-flash
       (* gemini models require paid Pollen balance)
 
@@ -23,16 +25,10 @@ COMPREHENSIVE MODEL TESTING RESULTS (June 2025):
     - openai-fast → Works, very fast but sometimes empty responses
     - All other model names → NOT FOUND on free tier
 
-ROUTE-BASED STRATEGY:
-  - CHAT / FUNCTION: Use auth API with best models (openai → mistral → llama → deepseek)
-  - COMMENT: Skip auth API, use free tier only (openai model, no key needed)
-  - Free tier: always available as last resort (anonymous, no key needed)
-
-IMPORTANT: Pollinations free tier is completely separate from the auth tier.
-Free tier only supports "openai" and "openai-fast" models. The auth tier
-supports 100+ models but many require paid balance ("pollen").
-With the current API key balance (~0.008 pollen), only the low-cost models
-work (openai, mistral, llama, deepseek, gemma, etc.).
+  NOTE: Model availability CHANGES over time depending on Pollinations load.
+  Models may become available/unavailable. The provider handles this with
+  cooldown tracking — if a model returns 402, it's cooled down for 10 min.
+  If all auth models fail, falls through to free tier automatically.
 """
 
 import asyncio
@@ -61,31 +57,40 @@ FREE_MODEL = "openai"  # Model available on anonymous tier (gpt-oss-20b)
 # Models requiring paid balance (Insufficient balance / 402) are excluded.
 AUTH_CHAT_MODELS = [
     # Working models (tested, produce Russian text):
+    # NOTE: availability varies with Pollinations load — cooldown handles this
     "openai",              # Best Russian (5/5), fast (~4s)
     "mistral",             # Good Russian (4/5), fastest (~3.6s)
+    "mistral-large",       # Good Russian (4/5), structured (~5s) — sometimes available
     "mistral-small-3.2",   # Good Russian (4/5), fast (~3s)
     "llama",               # Good Russian (4/5), ~8s
     "deepseek",            # Good Russian (4/5), ~4s, CoT
+    "grok",                # Good Russian (4/5), direct style (~6s) — sometimes available
     "llama-scout",         # Good Russian (3/5), fast (~3s)
     "gemma",               # Decent Russian (3/5), fast (~3s)
     "qwen-coder",          # OK Russian (3/5), very slow (~26s)
 ]
 
-# Models that DO NOT WORK with current key balance (Insufficient balance):
-# openai-large, openai-fast (empty), mistral-large, deepseek-pro,
-# llama-maverick, grok, grok-large, claude, claude-fast, claude-large,
+# Models that may not work with current key balance (Insufficient balance / 402):
+# These change over time! Pollinations adjusts pricing and availability.
+# openai-large, openai-fast (empty responses), deepseek-pro,
+# llama-maverick, grok-large, claude, claude-fast, claude-large,
 # qwen-large, kimi, kimi-code, gemini, gemini-fast, gemini-3-flash,
 # gemini-flash-lite-3.1, gemma-fast (invalid model), polly (no Russian)
+#
+# IMPORTANT: The cooldown system handles this automatically:
+# - If a model returns 402, it's cooled down for 10 minutes
+# - If all auth models fail, falls through to free tier
+# - Free tier (openai/openai-fast) always works as last resort
 
 # Models available on FREE tier (text.pollinations.ai, NO key needed)
 # Only "openai" and "openai-fast" work. Other model names return 404.
 FREE_MODELS = ["openai", "openai-fast"]
 
 # Best models for CHAT route (private messages — quality matters most)
-CHAT_MODELS = ["openai", "mistral", "mistral-small-3.2", "llama", "deepseek", "gemma"]
+CHAT_MODELS = ["openai", "mistral", "mistral-large", "mistral-small-3.2", "llama", "deepseek", "grok", "gemma"]
 
 # Best models for FUNCTION route (channel posts — quality + structured output)
-FUNCTION_MODELS = ["openai", "mistral", "mistral-small-3.2", "deepseek", "llama", "llama-scout"]
+FUNCTION_MODELS = ["openai", "mistral", "mistral-large", "mistral-small-3.2", "deepseek", "llama", "grok", "llama-scout"]
 
 # Models for COMMENT route (if auth is used — but normally skipped, free tier used)
 COMMENT_MODELS = ["mistral", "openai"]
