@@ -261,6 +261,13 @@ jobs:
           GROUP_COOLDOWN_SECONDS: "8"
           GROUP_REACTION_PROBABILITY: "0.35"
           GROUP_IGNORE_BOTS: "true"
+
+          # ── МАША — Kitchen Project Generator (2 раза в день) ──
+          # Маша генерирует проект кухни (AI-изображение + текст, подобный
+          # примеру «Кухни на заказ в Абакане!») и публикует в канал @abakan_mebel.
+          # Расписание — по Красноярскому времени (UTC+7).
+          MASHA_ENABLED: "true"
+          MASHA_POST_TIMES: "10:00,18:00"
         run: |
           echo "=== Starting Dasha Bot v6.0 — MULTI-PROVIDER FALLBACK + 8 NEW Pollinations models ==="
           echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY for chat/channel)"
@@ -271,6 +278,7 @@ jobs:
           echo "GROUP COMMENTS: cloud-only (local bypassed for speed, ~18s vs ~85s)"
           echo "CHANNEL: @abakan_mebel (2 posts/hour, every 30 min)"
           echo "FOOTER: Автор @asdasha_bot Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online"
+          echo "МАША: kitchen project generator — 2x/day at ${MASHA_POST_TIMES} (Krasnoyarsk, UTC+7)"
           echo "=== Launching bot with UNLIMITED auto-restart ==="
 
           # Show configured providers

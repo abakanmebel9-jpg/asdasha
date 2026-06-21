@@ -19,6 +19,8 @@ import signal
 import sys
 import time
 import fcntl
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 faulthandler.enable()
@@ -36,6 +38,7 @@ from bot.database import (
 from ai.router import ai_router
 from news import run_news_cycle
 from channel import channel_manager
+from masha import masha_generator
 
 # ── Logging setup ──────────────────────────────────────────────────────────────
 
@@ -98,6 +101,16 @@ class BackgroundTasks:
             asyncio.create_task(self._news_fetcher(), name="news_fetcher"),
             asyncio.create_task(self._channel_poster(), name="channel_poster"),
         ]
+        # Маша — генератор проектов кухни (2 раза в день)
+        if getattr(config, "MASHA_ENABLED", True):
+            self._tasks.append(
+                asyncio.create_task(self._masha_kitchen_poster(), name="masha_kitchen_poster")
+            )
+            logger.info(
+                f"Маша kitchen poster enabled — schedule: {config.MASHA_POST_TIMES} (Krasnoyarsk)"
+            )
+        else:
+            logger.info("Маша kitchen poster disabled (MASHA_ENABLED=false)")
         logger.info("Background tasks started")
 
     async def stop(self) -> None:
@@ -129,8 +142,6 @@ class BackgroundTasks:
             pass
 
         try:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
             hour = datetime.now(ZoneInfo("Europe/Moscow")).hour
 
             if 5 <= hour < 12:
@@ -198,6 +209,90 @@ class BackgroundTasks:
 
             interval = config.NEWS_INTERVAL_MINUTES * 60
             for _ in range(interval):
+                if not self._running:
+                    break
+                await asyncio.sleep(1)
+
+    async def _masha_kitchen_poster(self) -> None:
+        """Маша — 2 раза в день генерирует проект кухни и публикует в канал.
+
+        Расписание по Красноярскому времени (Asia/Krasnoyarsk, UTC+7).
+        Окно срабатывания: ±7 минут от заданного времени. Проверка каждые 5 минут.
+        Slot-ключ (дата+время) записывается в /tmp/masha_last_slot — гарантирует,
+        что один слот сработает только один раз даже при перезапусках бота.
+        """
+        await asyncio.sleep(180)  # подождать 3 мин после старта (прогрев AI router)
+        logger.info("Маша kitchen poster loop started")
+
+        # Парсим расписание "HH:MM,HH:MM" (Красноярское время)
+        schedule = []
+        try:
+            for part in config.MASHA_POST_TIMES.split(","):
+                part = part.strip()
+                if ":" in part:
+                    h, m = part.split(":")
+                    schedule.append((int(h), int(m)))
+        except Exception as e:
+            logger.error(f"Маша: invalid MASHA_POST_TIMES '{config.MASHA_POST_TIMES}': {e}")
+            return
+
+        if not schedule:
+            logger.warning("Маша: no valid schedule times, poster stopped")
+            return
+
+        kr_tz = ZoneInfo("Asia/Krasnoyarsk")
+        slot_file = "/tmp/masha_last_slot"
+        check_interval = 300  # 5 минут
+
+        while self._running:
+            try:
+                now_kr = datetime.now(kr_tz)
+                now_min = now_kr.hour * 60 + now_kr.minute
+                today = now_kr.strftime("%Y%m%d")
+
+                # Последний отработанный слот
+                last_slot = ""
+                try:
+                    with open(slot_file, "r") as f:
+                        last_slot = f.read().strip()
+                except Exception:
+                    pass
+
+                for (sh, sm) in schedule:
+                    slot_key = f"{today}_{sh:02d}{sm:02d}"
+                    if slot_key == last_slot:
+                        continue  # этот слот уже опубликован сегодня
+                    sched_min = sh * 60 + sm
+                    if abs(now_min - sched_min) <= 7:
+                        # Попали в окно — публикуем
+                        logger.info(
+                            f"Маша: triggering kitchen project post (slot {sh:02d}:{sm:02d} KR)"
+                        )
+                        try:
+                            posted = await masha_generator.generate_and_post()
+                            if posted:
+                                with open(slot_file, "w") as f:
+                                    f.write(slot_key)
+                                logger.info(f"Маша: kitchen project published (slot {slot_key})")
+                                # Уведомить владельца
+                                if config.OWNER_ID:
+                                    try:
+                                        await self.bot.send_message(
+                                            chat_id=config.OWNER_ID,
+                                            text=f"👨‍🎨 Маша опубликовала проект кухни ({sh:02d}:{sm:02d} KR)",
+                                        )
+                                    except Exception:
+                                        pass
+                            else:
+                                logger.warning(f"Маша: post failed for slot {slot_key}")
+                        except Exception as e:
+                            logger.error(f"Маша: generate_and_post error: {e}", exc_info=True)
+                        break
+            except Exception as e:
+                logger.error(f"Маша poster loop error: {e}", exc_info=True)
+
+            # Ждём до следующей проверки
+            for _ in range(check_interval):
                 if not self._running:
                     break
                 await asyncio.sleep(1)
@@ -286,6 +381,7 @@ async def main():
     logger.info("AI Router initialized")
 
     channel_manager.set_bot(bot)
+    masha_generator.set_bot(bot)
 
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
