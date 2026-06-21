@@ -3,11 +3,12 @@
 Provider fallback chain:
   1. LocalProvider          — RuadaptQwen3-4B (llama-cpp-python, CPU)
   2. GitHubModelsProvider    — GitHub Models free tier (PAT)
-  3. GroqProvider            — Groq free tier (API key)
-  4. GeminiProvider          — Google Gemini free tier (API key)
-  5. OpenRouterProvider      — OpenRouter free models (API key)
-  6. CerebrasProvider        — Cerebras free tier (API key)
-  7. PollinationsProvider    — Pollinations free (NO KEY NEEDED)
+  3. HuggingFaceProvider     — HuggingFace Inference free tier (HF_TOKEN)
+  4. GroqProvider            — Groq free tier (API key)
+  5. GeminiProvider          — Google Gemini free tier (API key)
+  6. OpenRouterProvider      — OpenRouter free models (API key)
+  7. CerebrasProvider        — Cerebras free tier (API key)
+  8. PollinationsProvider    — Pollinations free (NO KEY NEEDED)
 """
 
 from .base import BaseAIProvider, AIResponse
@@ -18,4 +19,5 @@ from .groq_provider import GroqProvider
 from .gemini_provider import GeminiProvider
 from .openrouter_provider import OpenRouterProvider
 from .cerebras_provider import CerebrasProvider
+from .huggingface_provider import HuggingFaceProvider
 from .provider_manager import ProviderManager

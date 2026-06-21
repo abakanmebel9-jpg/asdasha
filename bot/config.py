@@ -43,7 +43,7 @@ class BotConfig:
     # ══════════════════════════════════════════════════════════════════════
     # AI PROVIDERS — Multi-provider fallback chain
     # Primary: Local (RuadaptQwen3-4B)
-    # Fallback chain: GitHub Models → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+    # Fallback chain: GitHub Models → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
     # ══════════════════════════════════════════════════════════════════════
 
     # 1. GitHub Models — FREE via PAT (models.github.ai/inference)

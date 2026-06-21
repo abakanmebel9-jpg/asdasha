@@ -1,21 +1,23 @@
-name: Dasha Bot — MULTI-PROVIDER v5.3 — Даша Дизайнер Мебели
+name: Dasha Bot — MULTI-PROVIDER v6.0 — Даша Дизайнер Мебели
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Dasha Bot v5.3 — MULTI-PROVIDER FALLBACK
+# Dasha Bot v6.0 — MULTI-PROVIDER FALLBACK + 8 NEW Pollinations models
 #
 #   FAILOVER CHAIN:
-#     Local (RuadaptQwen3-4B) → GitHub Models → HuggingFace → Groq →
-#     Gemini → OpenRouter → Cerebras → Pollinations
+#     Local (RuadaptQwen3-4B) → GitHub Models → HuggingFace →
+#     Groq → Gemini → OpenRouter → Cerebras → Pollinations
 #
 #   ROUTE STRATEGY:
-#     CHAT/FUNCTION: Pollinations auth (best models with API key)
-#     COMMENT: Pollinations free only (preserves key quota)
+#     CHAT/FUNCTION: Local → GitHub → ... → Pollinations auth (19 models)
+#     COMMENT: cloud-only → GitHub → ... → Pollinations free only (no local, no auth)
 #
 #   - LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (~2.5GB GGUF, CPU)
-#   - 6 CLOUD PROVIDERS: all free, all OpenAI-compatible
-#   - Pollinations: 11 models tested (auth for CHAT/FUNCTION, free for COMMENT)
+#   - 7 CLOUD PROVIDERS: all free, OpenAI-compatible
+#   - Pollinations v6.0: 19 models tested — 8 NEW (gpt-5.4-mini, nova, nova-fast,
+#     minimax, minimax-m2.7, perplexity-fast, step-3.5-flash, grok-large)
 #   - Multi-image support: send_media_group up to 10 photos per post
 #   - libopenblas-dev for fast CPU inference
+#   - FOOTER: Автор @asdasha_bot Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
 #
 # SECRETS NEEDED (add in GitHub repo Settings → Secrets):
 #   BOT_TOKEN          — Telegram bot token (from @BotFather)
@@ -25,13 +27,13 @@ name: Dasha Bot — MULTI-PROVIDER v5.3 — Даша Дизайнер Мебел
 #   PHONE              — +7 (913) 448-37-17
 #   HF_TOKEN           — HuggingFace token (for model download)
 #   GH_PAT_TOKEN       — GitHub PAT with models:read scope (for GitHub Models + self-dispatch)
+#   POLLINATIONS_API_KEY — enter.pollinations.ai (19 models with auth key)
 #
 # OPTIONAL SECRETS (free API keys for cloud providers):
 #   GROQ_API_KEY       — console.groq.com (free, ultra-fast Llama-3.3-70B)
 #   GEMINI_API_KEY     — aistudio.google.com (free, Gemini-2.0-Flash)
 #   OPENROUTER_API_KEY — openrouter.ai (free, 20+ models)
 #   CEREBRAS_API_KEY   — cloud.cerebras.ai (free, ultra-fast Llama-3.3-70B)
-#   POLLINATIONS_API_KEY — enter.pollinations.ai (optional, free tier works without key)
 # ═══════════════════════════════════════════════════════════════════════════
 
 on:
@@ -260,14 +262,15 @@ jobs:
           GROUP_REACTION_PROBABILITY: "0.35"
           GROUP_IGNORE_BOTS: "true"
         run: |
-          echo "=== Starting Dasha Bot v5.3 — MULTI-PROVIDER FALLBACK ==="
+          echo "=== Starting Dasha Bot v6.0 — MULTI-PROVIDER FALLBACK + 8 NEW Pollinations models ==="
           echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY for chat/channel)"
           echo "CLOUD FALLBACK: GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations"
-          echo "POLLINATIONS: 11 auth models for CHAT/FUNCTION, Free API for COMMENT"
+          echo "POLLINATIONS v6.0: 19 auth models for CHAT/FUNCTION (8 NEW), Free API for COMMENT"
+          echo "NEW MODELS: gpt-5.4-mini, nova, nova-fast, minimax, minimax-m2.7, perplexity-fast, step-3.5-flash, grok-large"
           echo "MULTI-IMAGE: send_media_group support (up to 10 photos per post)"
           echo "GROUP COMMENTS: cloud-only (local bypassed for speed, ~18s vs ~85s)"
           echo "CHANNEL: @abakan_mebel (2 posts/hour, every 30 min)"
-          echo "FOOTER: Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online (single, no duplication)"
+          echo "FOOTER: Автор @asdasha_bot Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online"
           echo "=== Launching bot with UNLIMITED auto-restart ==="
 
           # Show configured providers
@@ -279,7 +282,7 @@ jobs:
           [ -n "$GEMINI_API_KEY" ] && echo "  ✅ Gemini (2.0-Flash)" || echo "  ⏭️  Gemini (no key)"
           [ -n "$OPENROUTER_API_KEY" ] && echo "  ✅ OpenRouter (20+ models)" || echo "  ⏭️  OpenRouter (no key)"
           [ -n "$CEREBRAS_API_KEY" ] && echo "  ✅ Cerebras (ultra-fast)" || echo "  ⏭️  Cerebras (no key)"
-          echo "  ✅ Pollinations (always available, no key)"
+          [ -n "$POLLINATIONS_API_KEY" ] && echo "  ✅ Pollinations (19 auth models: gpt-5.4-mini, nova, minimax...)" || echo "  ⏭️  Pollinations (free tier only, no key)"
           echo ""
 
           RETRY=0

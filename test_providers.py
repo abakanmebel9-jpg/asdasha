@@ -85,15 +85,19 @@ async def test_provider(name, provider, test_prompt=None, route_type="chat", max
 
 async def main():
     print("=" * 60)
-    print("🤖 Dasha Bot — AI Provider Test Suite v5.0")
+    print("🤖 Dasha Bot — AI Provider Test Suite v6.0")
     print("=" * 60)
     print()
     print("Цепочка фолбэка:")
     print("  Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations")
     print()
-    print("Pollinations ROUTE STRATEGY:")
-    print("  CHAT/FUNCTION: Auth API (openai → mistral → llama → deepseek)")
+    print("Pollinations v6.0 ROUTE STRATEGY:")
+    print("  CHAT: gpt-5.4-mini → nova-fast → minimax → mistral-small-3.2 → ... (16 models)")
+    print("  FUNCTION: nova → gpt-5.4-mini → openai → mistral-large → ... (12 models)")
     print("  COMMENT: Free API only (preserves key quota)")
+    print()
+    print("NEW v6.0 models (8): gpt-5.4-mini, nova, nova-fast, minimax, minimax-m2.7,")
+    print("                     perplexity-fast, step-3.5-flash, grok-large")
     print()
     
     # Check configured providers

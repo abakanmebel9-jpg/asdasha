@@ -5,7 +5,7 @@ Handles news posts, AI-generated content, and proper footer.
 РАСПИСАНИЕ: 2 поста в час (интервал 30 минут).
 
 Every post footer (STRICT):
-  Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
+  Автор @asdasha_bot Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
 """
 
 import logging
@@ -32,8 +32,9 @@ from ai.router import ai_router
 logger = logging.getLogger("dasha.channel")
 
 # Post footer — attached to EVERY channel post (HTML, clickable)
-# Строго: Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
+# Строго: Автор @asdasha_bot Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
 POST_FOOTER = (
+    'Автор <a href="https://t.me/asdasha_bot">@asdasha_bot</a> '
     'Кухни на заказ 📞 <a href="tel:+79134483717">+7 (913) 448-37-17</a> '
     '🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
 )
@@ -195,13 +196,21 @@ class ChannelManager:
         post_text = _build_post_with_footer(post_text, has_media=has_media)
 
         # Verify final text fits Telegram limit (final safety check)
+        # Use footer-aware re-truncation to avoid breaking HTML tags.
         final_limit = TELEGRAM_MEDIA_TEXT_LIMIT if has_media else TELEGRAM_TEXT_LIMIT
         if len(post_text) > final_limit:
             logger.warning(
                 f"Post still too long after truncation: {len(post_text)} > {final_limit}, "
-                f"force truncating"
+                f"re-truncating body (footer-aware)"
             )
-            post_text = post_text[:final_limit - 3] + "…"
+            body = _strip_footer(post_text)
+            post_text = _build_post_with_footer(body, has_media=has_media)
+            # Absolute last resort — strip footer and hard-cut the body,
+            # then re-append footer. Never slice through HTML tags.
+            if len(post_text) > final_limit:
+                body = _strip_footer(post_text)
+                body = body[: final_limit - len(_build_footer()) - 12] + "…"
+                post_text = _build_post_with_footer(body, has_media=has_media)
 
         # Check if this post is too similar to recent posts
         fingerprint = hashlib.md5(post_text.encode()).hexdigest()
