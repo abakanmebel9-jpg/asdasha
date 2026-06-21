@@ -4,7 +4,7 @@
 Маша — это автономный генератор контента, который 2 раза в день (по расписанию,
 задаётся в bot/main.py, по умолчанию 10:00 и 18:00 по Красноярскому времени)
 создаёт проект-пост «кухня на заказ в Абакане»:
-  1. Случайно выбирает стиль кухни из KITCHEN_STYLES (12+ вариантов).
+  1. Случайно выбирает стиль кухни из KITCHEN_STYLES (20 вариантов).
   2. Генерирует изображение интерьера через Pollinations
      (ai_router.primary.generate_image, 1024x768, ландшафтная ориентация).
   3. Генерирует текст поста через LLM (ai_router.primary.chat, ROUTE_FUNCTION) —
@@ -59,7 +59,7 @@ logger = logging.getLogger("dasha.masha")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# KITCHEN STYLES — 14 вариантов.
+# KITCHEN STYLES — 20 вариантов.
 # Каждый стиль — словарь с:
 #   image_prompt:    английский фрагмент промпта для Pollinations
 #                    ( Pollinations лучше понимает английские промпты )
@@ -192,6 +192,64 @@ KITCHEN_STYLES: List[Dict[str, str]] = [
         ),
         "ru_description": "пастельная мятно-шалфейная кухня — зелёные "
                           "матовые фасады, латунь, свежесть",
+    },
+    {
+        "image_prompt": (
+            "modern classic kitchen interior, two-tone cabinets navy blue "
+            "bottom and white top, brass hardware, white quartz countertop, "
+            "subway tile backsplash, glass front upper cabinets, elegant "
+            "pendant lighting"
+        ),
+        "ru_description": "современная классика двухцветная — синий низ и "
+                          "белый верх, латунь, стекло",
+    },
+    {
+        "image_prompt": (
+            "warm cozy wooden kitchen interior, natural oak cabinets, butcher "
+            "block countertop, terracotta tile floor, copper pots hanging, "
+            "warm incandescent lighting, farmhouse sink, rustic charm"
+        ),
+        "ru_description": "тёплая деревянная кухня-ферма — дуб, столешница "
+                          "из массива, медь, терракота",
+    },
+    {
+        "image_prompt": (
+            "luxury modern kitchen interior, gloss black cabinets, calacatta "
+            "marble waterfall island, gold fixtures, integrated appliances, "
+            "linear pendant lights, floor to ceiling windows, sophisticated "
+            "ambiance"
+        ),
+        "ru_description": "люкс-модерн — чёрный глянец, мраморный остров-"
+                          "водопад, золото, панорамные окна",
+    },
+    {
+        "image_prompt": (
+            "bright white Scandinavian-Asian fusion kitchen interior, white "
+            "minimalist cabinets, light wood accents, integrated indoor "
+            "garden herb wall, stone countertop, soft natural daylight, zen "
+            "atmosphere"
+        ),
+        "ru_description": "светлая сканди-азиатская кухня — минимализм, "
+                          "фитостена из зелени, дзен-атмосфера",
+    },
+    {
+        "image_prompt": (
+            "colorful modern kitchen interior, deep forest green matte "
+            "cabinets, warm oak open shelving, white farmhouse sink, copper "
+            "faucet, patterned cement tile floor, lively atmosphere"
+        ),
+        "ru_description": "цветная кухня в лесной зелени — матовая зелень, "
+                          "дубовые полки, медь, узорный пол",
+    },
+    {
+        "image_prompt": (
+            "studio apartment kitchen interior, compact linear layout, "
+            "white handleless cabinets, integrated appliances, black "
+            "countertop, mirror backsplash, slim LED lighting, space "
+            "efficient modern design"
+        ),
+        "ru_description": "кухня-студия линейная — безручечные фасады, "
+                          "встроенная техника, эргономика малого пространства",
     },
 ]
 
@@ -340,6 +398,11 @@ def _fallback_text(ru_description: str) -> str:
         "Кухня мечты в Абакане? 🏡",
         "Проектируем кухни в Абакане! 📐",
         "Ваша новая кухня — в Абакане! 🪵",
+        "Кухни под ваш интерьер — Абакан! 🛋",
+        "Собственная кухня от 45 000 ₽ — Абакан! 💎",
+        "Кухня на заказ в Хакасии! 🏠",
+        "Новая кухня — новое настроение! Абакан 🌿",
+        "Кухня, которая работает на вас — Абакан! ⚙️",
     ]
     sparkle_lines = [
         "✨ Хотите кухню по индивидуальным размерам? Мы предлагаем:",
@@ -347,6 +410,9 @@ def _fallback_text(ru_description: str) -> str:
         "✨ Нужна кухня, которая идеально впишется в интерьер? Мы предлагаем:",
         "✨ Мечтаете о кухне, как с картинки? Мы реализуем:",
         "✨ Готовы обновить кухню под ваши размеры? Мы предлагаем:",
+        "✨ Кухня, собранная на собственном производстве в Абакане. Мы предлагаем:",
+        "✨ Подберём стиль, материалы и фурнитуру под ваш бюджет. Мы делаем:",
+        "✨ Проектируем кухни с учётом эргономики и вашего роста. Мы предлагаем:",
     ]
     all_benefits = [
         "✅ Эксклюзивный дизайн",
@@ -361,12 +427,18 @@ def _fallback_text(ru_description: str) -> str:
         "✅ Влагостойкие материалы для кухни",
         "✅ Собственное производство в Абакане",
         "✅ Цены от 45 000 руб",
+        "✅ Профессиональная сборка включена",
+        "✅ Доводчики на всех ящиках",
+        "✅ Индивидуальные размеры до миллиметра",
+        "✅ Выезд замерщика по всей Хакасии",
     ]
     ctas = [
         "Закажите бесплатный дизайн-проект! ➡️ @Abakan_mebel",
         "Оставьте заявку на бесплатный дизайн-проект! ➡️ @Abakan_mebel",
         "Получите бесплатный 3D-проект кухни! ➡️ @Abakan_mebel",
         "Закажите бесплатный замер и проект! ➡️ @Abakan_mebel",
+        "Напишите нам и получите бесплатный проект кухни! ➡️ @Abakan_mebel",
+        "Закажите бесплатный замер и 3D-визуализацию! ➡️ @Abakan_mebel",
     ]
     all_hashtags = [
         "#мебельабакан", "#кухниабакан", "#мебельназаказ", "#дизайнабакан",
