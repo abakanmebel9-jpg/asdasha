@@ -1,9 +1,9 @@
-"""Pollinations AI Provider v7.0 — LIVE-TESTED MODELS for Dasha Bot.
+"""Pollinations AI Provider v7.1 — LIVE-TESTED MODELS for Dasha Bot.
 
-COMPREHENSIVE LIVE TEST RESULTS (v7.0 — 2026-03, 39 text-output models tested
+COMPREHENSIVE LIVE TEST RESULTS (v7.1 — 2026-03, 42 text-output models tested
 against the API key sk_... with a Russian chat prompt + a brief comment prompt):
 
-  ✅ WORKS_RU_GOOD (12 models — perfect Russian, fast, ALWAYS available):
+  ✅ WORKS_RU_GOOD (15 models — perfect Russian, fast, ALWAYS available):
     - openai           → q5, ~1.3s  — best overall (structured, perfect RU)
     - mistral          → q5, ~1.4s  — fast, reasoning
     - gemma            → q5, ~1.5s  — reasoning, solid
@@ -11,40 +11,46 @@ against the API key sk_... with a Russian chat prompt + a brief comment prompt):
     - llama-scout      → q5, ~1.1s  — fast, good RU
     - qwen-coder       → q5, ~1.2s  — great RU despite "coder" name
     - mistral-small-3.2 → q5, ~1.1s — solid fallback
+    - mistral-small    → q5, ~2.6s  — Mistral Small 2603 (Venice), excellent RU ⭐ v7.1
+    - llama-3.3        → q5, ~2.7s  — Llama-3.3-70B-Instruct, excellent RU ⭐ v7.1
     - gpt-5.4-mini     → q5, ~1.1s  — GPT-5.4 (balance-dependent)
     - llama            → q5, ~1.4s  — fast (balance-dependent)
     - perplexity-fast  → q5, ~1.1s  — ⚠️ injects [1][2] citations (stripped)
     - deepseek         → q5, ~1.0s  — reasoning (balance-dependent)
     - perplexity-deep  → q5, ~1.1s  — ⚠️ citations stripped
+    - openai-fast      → q5, ~10s   — gpt-5-nano (balance-dependent) ⭐ v7.1
 
   ✅ PREMIUM_SOMETIMES_WORKS (8 models — q5 RU, work when balance permits):
-    - grok             → q5, ~1.2s  — excellent RU ⭐ NEW AVAILABLE
-    - grok-large       → q5, ~1.1s  — reasoning ⭐ NEW AVAILABLE
-    - mistral-large    → q5, ~1.6s  — long posts ⭐ NEW AVAILABLE
-    - nova             → q5, ~1.1s  — structured output ⭐ NEW AVAILABLE
-    - qwen-vision      → q5, ~1.0s  — vision-capable, text works ⭐ NEW AVAILABLE
-    - qwen-vision-pro  → q5, ~1.1s  — reasoning, vision ⭐ NEW AVAILABLE
-    - step-3.5-flash   → q5, ~0.9s  — reasoning, fast ⭐ NEW AVAILABLE
+    - grok             → q5, ~1.2s  — excellent RU
+    - grok-large       → q5, ~1.1s  — reasoning
+    - mistral-large    → q5, ~1.6s  — long posts
+    - nova             → q5, ~1.1s  — structured output
+    - qwen-vision      → q5, ~1.0s  — vision-capable, text works
+    - qwen-vision-pro  → q5, ~1.1s  — reasoning, vision
+    - step-3.5-flash   → q5, ~0.9s  — reasoning, fast
     - step-flash       → q4, ~1.1s  — sometimes misses contacts
 
-  ❌ FAIL_402_ALWAYS (13 premium models — always insufficient balance):
+  ❌ FAIL_402_ALWAYS (12 premium models — always insufficient balance):
     deepseek-pro, glm, gpt-5.4, grok-4-20-reasoning, kimi, kimi-code,
     openai-large, perplexity, perplexity-reasoning, qwen-large,
-    openai-audio, openai-audio-large, midijourney-large
+    openai-audio, openai-audio-large
     (Kept as best-effort fallbacks — work when balance is topped up.)
 
-  ❌ FAIL_EMPTY: openai-fast (returns content:"" for any prompt — BROKEN, removed)
   ❌ ENGLISH_ONLY: polly (returns English error text — useless for Russian)
   ❌ NOT_CHAT_MODELS: qwen-safety (classifier, not chat), midijourney (music notation)
-  ❌ DOES_NOT_EXIST: mistral-small, qwen, qwen-2.5, phi, command-r, mistral-medium,
-      deepseek-r1, gemma-fast, openai-3-large, openai-3-small, universal-2, universal-3-pro
   ⚠️  EXCLUDED: minimax, minimax-m2.7 — HALLUCINATE fake phone numbers
       ("+7 (923) 000-00-00") or REFUSE to roleplay. Too dangerous.
+
+  ALIAS NOTE (v7.1): Several model names are aliases for the same backend:
+    grok-4 = grok, qwen-vl = qwen-vision, qwen3-vl = qwen-vision,
+    qwen3-coder = qwen-coder, llama-4-scout = llama-scout,
+    openai-mini = gpt-5.4-mini, gpt-5-mini = gpt-5.4-mini
+    mistral-small ≠ mistral-small-3.2 (DIFFERENT models! small=2603, small-3.2=3.2)
 
   ✅ FREE TIER (text.pollinations.ai, NO key needed):
     - openai → Works (gpt-oss-20b), good Russian, ~6-10s (last resort)
 
-  MODEL COUNT: 12 always-working + 8 premium-sometimes + 13 premium-always-402 = 33 auth models
+  MODEL COUNT: 15 always+balance + 8 premium-sometimes + 12 premium-always-402 = 35 auth models
   Verified-working models are tried FIRST so 402s rarely waste time.
 
   NOTE: Model availability CHANGES over time depending on Pollinations balance.
@@ -92,10 +98,10 @@ FREE_MODEL = "openai"  # Model available on anonymous tier (gpt-oss-20b)
 #      Too dangerous for a bot whose purpose is giving the correct contact.
 # ════════════════════════════════════════════════════════════════════════════
 
-# All auth models known to the API (documentation — 39 text-output models from /v1/models).
+# All auth models known to the API (v7.1 — 35 text-output models).
 # Ordering = verified-always-working first, then premium-sometimes, then premium-best-effort.
 AUTH_CHAT_MODELS = [
-    # ── VERIFIED ALWAYS WORKING (7) — excellent Russian, always available ──
+    # ── VERIFIED ALWAYS WORKING (9) — excellent Russian, always available ──
     "openai",             # ~1.3s, q5, best overall (structured, perfect RU)
     "mistral",            # ~1.4s, q5, fast, reasoning
     "gemma",              # ~1.5s, q5, reasoning, solid
@@ -103,22 +109,25 @@ AUTH_CHAT_MODELS = [
     "llama-scout",        # ~1.1s, q5, fast, good RU
     "qwen-coder",         # ~1.2s, q5, great RU despite "coder" name
     "mistral-small-3.2",  # ~1.1s, q5, solid fallback
-    # ── BALANCE-DEPENDENT (5) — work when balance permits, sometimes 402 ──
+    "mistral-small",      # ~2.6s, q5, Mistral Small 2603 Venice, excellent RU ⭐ v7.1
+    "llama-3.3",          # ~2.7s, q5, Llama-3.3-70B, excellent RU ⭐ v7.1
+    # ── BALANCE-DEPENDENT (6) — work when balance permits, sometimes 402 ──
     "gpt-5.4-mini",       # ~1.1s, q5, GPT-5.4
     "llama",              # ~1.4s, q5, fast
     "perplexity-fast",    # ~1.1s, q5, ⚠️ citations stripped
     "deepseek",           # ~1.0s, q5, reasoning
     "perplexity-deep",    # ~1.1s, q5, ⚠️ citations stripped
+    "openai-fast",        # ~10s, q5, gpt-5-nano (balance-dependent) ⭐ v7.1
     # ── PREMIUM SOMETIMES WORKS (8) — q5 RU when balance allows, 402 otherwise ──
-    "grok",               # ~1.2s, q5, excellent RU ⭐ NEW AVAILABLE
-    "grok-large",         # ~1.1s, q5, reasoning ⭐ NEW AVAILABLE
-    "mistral-large",      # ~1.6s, q5, long posts ⭐ NEW AVAILABLE
-    "nova",               # ~1.1s, q5, structured output ⭐ NEW AVAILABLE
-    "qwen-vision",        # ~1.0s, q5, vision-capable ⭐ NEW AVAILABLE
-    "qwen-vision-pro",    # ~1.1s, q5, reasoning, vision ⭐ NEW AVAILABLE
-    "step-3.5-flash",     # ~0.9s, q5, reasoning, fast ⭐ NEW AVAILABLE
+    "grok",               # ~1.2s, q5, excellent RU
+    "grok-large",         # ~1.1s, q5, reasoning
+    "mistral-large",      # ~1.6s, q5, long posts
+    "nova",               # ~1.1s, q5, structured output
+    "qwen-vision",        # ~1.0s, q5, vision-capable
+    "qwen-vision-pro",    # ~1.1s, q5, reasoning, vision
+    "step-3.5-flash",     # ~0.9s, q5, reasoning, fast
     "step-flash",         # ~1.1s, q4, sometimes misses contacts
-    # ── PREMIUM ALWAYS 402 (13) — rarely work, but kept for when balance is topped up ──
+    # ── PREMIUM ALWAYS 402 (12) — rarely work, but kept for when balance is topped up ──
     "gpt-5.4",            # premium, reasoning, 1M context
     "openai-large",       # premium, reasoning
     "deepseek-pro",       # premium, reasoning
@@ -134,12 +143,18 @@ AUTH_CHAT_MODELS = [
 # Models that do NOT work / must NOT be used:
 # 402 (premium): see PREMIUM ALWAYS 402 list above (cooldown handles automatically)
 # 400 (Invalid model): openai-3-large, openai-3-small, universal-2, universal-3-pro,
-#   mistral-medium, deepseek-r1, qwen, qwen-2.5, gemma-fast, phi, command-r
-# EMPTY response: openai-fast (gpt-5-nano burns token budget on hidden reasoning)
+#   mistral-medium, deepseek-r1, qwen, qwen-2.5, gemma-fast, phi, command-r,
+#   qwen3, phi-4, command-r-plus, gemma-3, deepseek-v3, claude-3.5-haiku,
+#   yi-1.5, yi-lightning, codestral, llama-4, mistral-nemo, mistral-tiny
 # English-only: polly (returns English error text)
 # NOT chat models: qwen-safety (classifier), midijourney (music notation)
-# Does not exist: mistral-small (only mistral-small-3.2 exists)
 # HALLUCINATION RISK: minimax, minimax-m2.7 (fabricate fake phone or refuse roleplay — EXCLUDED)
+#
+# ALIAS NOTE (v7.1): These names map to the same backend model:
+#   grok-4 = grok, qwen-vl = qwen-vision, qwen3-vl = qwen-vision,
+#   qwen3-coder = qwen-coder, llama-4-scout = llama-scout,
+#   openai-mini = gpt-5.4-mini, gpt-5-mini = gpt-5.4-mini
+#   mistral-small ≠ mistral-small-3.2 (DIFFERENT models!)
 #
 # IMPORTANT: The cooldown system handles 402 automatically:
 # - If a model returns 402, it's cooled down for 10 minutes
@@ -152,7 +167,7 @@ AUTH_CHAT_MODELS = [
 FREE_MODELS = ["openai"]
 
 # Best models for CHAT route (private messages — quality matters most)
-# Verified-working 12 first (ordered by speed × quality from live test),
+# Verified-working 15 first (ordered by speed × quality from live test),
 # then premium best-effort fallbacks.
 CHAT_MODELS = [
     # ── VERIFIED ALWAYS WORKING — fastest high-quality first ──
@@ -163,20 +178,23 @@ CHAT_MODELS = [
     "llama-scout",        # ~1.1s, q5 — fast
     "qwen-coder",         # ~1.2s, q5 — great RU
     "mistral-small-3.2",  # ~1.1s, q5 — solid fallback
+    "mistral-small",      # ~2.6s, q5 — Mistral Small 2603, excellent RU ⭐ v7.1
+    "llama-3.3",          # ~2.7s, q5 — Llama-3.3-70B, excellent RU ⭐ v7.1
     # ── BALANCE-DEPENDENT — work when balance permits ──
     "gpt-5.4-mini",       # ~1.1s, q5 — GPT-5.4
     "llama",              # ~1.4s, q5 — fast
     "perplexity-fast",    # ~1.1s, q5 (citations stripped)
     "deepseek",           # ~1.0s, q5 — reasoning
     "perplexity-deep",    # ~1.1s, q5 (citations stripped)
+    "openai-fast",        # ~10s, q5 — gpt-5-nano ⭐ v7.1
     # ── PREMIUM SOMETIMES WORKS (q5 RU when balance allows) ──
-    "grok",               # ⭐ NEW
-    "grok-large",         # ⭐ NEW
-    "mistral-large",      # ⭐ NEW
-    "nova",               # ⭐ NEW
-    "qwen-vision",        # ⭐ NEW
-    "qwen-vision-pro",    # ⭐ NEW
-    "step-3.5-flash",     # ⭐ NEW
+    "grok",
+    "grok-large",
+    "mistral-large",
+    "nova",
+    "qwen-vision",
+    "qwen-vision-pro",
+    "step-3.5-flash",
     "step-flash",
     # ── PREMIUM ALWAYS 402 (rarely work, kept for when balance is topped up) ──
     "gpt-5.4",
@@ -192,7 +210,7 @@ CHAT_MODELS = [
 ]
 
 # Best models for FUNCTION route (channel posts — quality + structured output)
-# Prioritize models with long, well-structured Russian output (Test A length).
+# Prioritize models with long, well-structured Russian output.
 FUNCTION_MODELS = [
     # ── VERIFIED ALWAYS WORKING — best long structured Russian first ──
     "openai",             # q5, ~1.3s — best structured
@@ -200,6 +218,8 @@ FUNCTION_MODELS = [
     "gemma",              # q5, ~1.5s — solid, long output
     "llama-scout",        # q5, ~1.1s — fast, long output
     "qwen-coder",         # q5, ~1.2s — great RU
+    "llama-3.3",          # q5, ~2.7s — Llama-3.3-70B, excellent for posts ⭐ v7.1
+    "mistral-small",      # q5, ~2.6s — Mistral Small 2603, long output ⭐ v7.1
     "nova-fast",          # q5, ~1.0s — fast
     "mistral-small-3.2",  # q5, ~1.1s — solid fallback
     # ── BALANCE-DEPENDENT ──
@@ -208,14 +228,15 @@ FUNCTION_MODELS = [
     "perplexity-fast",    # q5 (citations stripped)
     "deepseek",           # q5 — thorough
     "perplexity-deep",    # q5 (citations stripped)
+    "openai-fast",        # q5, ~10s — gpt-5-nano ⭐ v7.1
     # ── PREMIUM SOMETIMES WORKS (long structured output when available) ──
-    "mistral-large",      # ⭐ NEW — best for long posts
-    "grok",               # ⭐ NEW
-    "grok-large",         # ⭐ NEW
-    "nova",               # ⭐ NEW — structured output
-    "qwen-vision-pro",    # ⭐ NEW
-    "step-3.5-flash",     # ⭐ NEW
-    "qwen-vision",        # ⭐ NEW
+    "mistral-large",      # best for long posts
+    "grok",
+    "grok-large",
+    "nova",               # structured output
+    "qwen-vision-pro",
+    "step-3.5-flash",
+    "qwen-vision",
     "step-flash",
     # ── PREMIUM ALWAYS 402 ──
     "gpt-5.4",
@@ -242,19 +263,22 @@ COMMENT_MODELS = [
     "gemma",              # ~1.5s
     "qwen-coder",         # ~1.2s
     "mistral-small-3.2",  # ~1.1s
+    # ── Slower always-working (avoid for real-time unless needed) ──
+    # mistral-small, llama-3.3 — ~2.6-2.7s, too slow for comments
     # ── BALANCE-DEPENDENT ──
     "gpt-5.4-mini",       # ~1.1s
     "llama",              # ~1.4s
     "perplexity-fast",    # ~1.1s (citations stripped)
     "deepseek",           # ~1.0s
     "perplexity-deep",    # ~1.1s (citations stripped)
+    # openai-fast — ~10s, too slow for comments
     # ── PREMIUM SOMETIMES WORKS (fast when available) ──
-    "grok",               # ⭐ NEW
-    "grok-large",         # ⭐ NEW
-    "mistral-large",      # ⭐ NEW
-    "nova",               # ⭐ NEW
-    "qwen-vision",        # ⭐ NEW
-    "step-3.5-flash",     # ⭐ NEW
+    "grok",
+    "grok-large",
+    "mistral-large",
+    "nova",
+    "qwen-vision",
+    "step-3.5-flash",
     "step-flash",
     # ── PREMIUM ALWAYS 402 ──
     "gpt-5.4",

@@ -447,12 +447,23 @@ class LocalProvider(BaseAIProvider):
 
         max_tokens = max_tokens or self._max_tokens
 
+        # CRITICAL: Apply the CPU max_tokens cap BEFORE truncation.
+        # _generate() caps max_tokens at 800 for CPU speed, but
+        # _truncate_prompt_if_needed() was reserving the full 2048 tokens
+        # for generation — causing unnecessary prompt truncation that
+        # degraded FUNCTION (channel post) quality. By applying the cap
+        # here, the truncation logic correctly reserves only 800 tokens,
+        # leaving 3232 tokens for the prompt instead of just 1984.
+        effective_max_tokens = min(max_tokens, 800)  # Same cap as _generate()
+
         try:
             # Format prompt using ChatML
             prompt = self._format_messages_chatml(messages)
 
             # Truncate if needed to fit context window
-            prompt = self._truncate_prompt_if_needed(messages, prompt, max_tokens)
+            # Use effective_max_tokens so truncation reserves the correct
+            # amount of context for generation (800, not 2048).
+            prompt = self._truncate_prompt_if_needed(messages, prompt, effective_max_tokens)
 
             start_time = time.time()
 

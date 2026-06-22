@@ -44,6 +44,7 @@ CHAT_URL = f"{GROQ_BASE_URL}/chat/completions"
 RUSSIAN_MODELS = [
     "llama-3.3-70b-versatile",   # Best quality Russian
     "llama3-70b-8192",            # Great Russian, slightly older
+    "qwen-qwq-32b",              # Good Russian, reasoning (NEW 2026)
     "mixtral-8x7b-32768",         # Good Russian, MoE model
     "llama-3.1-8b-instant",       # Fastest, decent Russian
     "gemma2-9b-it",               # Good Russian, Google model

@@ -52,6 +52,7 @@ GEMINI_NATIVE_BASE = "https://generativelanguage.googleapis.com/v1beta"
 # Models optimized for Russian (FREE tier, ranked by quality)
 FREE_MODELS = [
     "gemini-2.0-flash",       # Best quality Russian (free)
+    "gemini-2.5-flash-preview-05-20",  # Newer, reasoning, good RU (free preview) ⭐
     "gemini-2.0-flash-lite",  # Fastest, good Russian (free)
     "gemini-1.5-flash",       # Still free, good Russian
 ]

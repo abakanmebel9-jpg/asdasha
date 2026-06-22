@@ -90,6 +90,17 @@ class BotConfig:
     # HuggingFace — for model download only
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
 
+    # 8. LLM7.io — FREE, NO KEY NEEDED! (api.llm7.io) ⭐ v7.1
+    #    Best model: qwen3-235b (GPT-4 class Russian!)
+    #    Optional: free API key for higher rate limits (120 RPM vs 30 RPM)
+    #    Get key: llm7.io → Sign up → API Keys
+    LLM7_API_KEY: str = os.getenv("LLM7_API_KEY", "")
+
+    # 9. Chutes AI — FREE with key (llm.chutes.ai) ⭐ v7.1
+    #    Models: DeepSeek-V3, Qwen3-235B, Gemma-4-31B (excellent Russian)
+    #    Get key: chutes.ai → Sign up → API Keys (starts with cpk_)
+    CHUTES_API_KEY: str = os.getenv("CHUTES_API_KEY", "")
+
     # Local model settings — RuadaptQwen3-4B-Instruct Q4_K_M
     ENABLE_LOCAL_MODEL: bool = os.getenv("ENABLE_LOCAL_MODEL", "true").lower() == "true"
     MODEL_PATH: str = os.getenv("MODEL_PATH", "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf")

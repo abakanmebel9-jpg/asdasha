@@ -1,11 +1,13 @@
-"""AI Router v7.0 — MULTI-PROVIDER FALLBACK + HUMAN-LIKE personality (Dasha Bot).
+"""AI Router v7.1 — MULTI-PROVIDER FALLBACK + HUMAN-LIKE personality (Dasha Bot).
 
-v7.0 UPDATES:
-- Pollinations v7.0: 33 auth models (7 always + 5 balance + 8 premium-sometimes + 13 premium-402)
-- 8 newly-available premium models now work when balance permits (grok, grok-large, etc)
-- Improved contact deduplication: better handling of duplicates and extra characters
-- All providers are OpenAI-compatible (except local llama-cpp)
-- Automatic provider discovery — only configured providers (with API keys) are used
+v7.1 UPDATES:
+- Fixed local model context truncation bug: effective_max_tokens (800) now applied BEFORE
+  _truncate_prompt_if_needed, giving 3232 tokens for prompt instead of 1984
+- Added 3 new Pollinations models: mistral-small, llama-3.3, openai-fast (35 total)
+- Added LLM7.io provider: FREE, NO key needed, qwen3-235b (GPT-4 class Russian!)
+- Added Chutes AI provider: free, DeepSeek-V3 and Qwen3-235B
+- 11 providers in fallback chain: Local → GitHub → DeepInfra → HF → Groq → Gemini →
+  OpenRouter → Cerebras → LLM7 → Chutes → Pollinations
 
 FALLBACK CHAIN:
   1. LOCAL:      RuadaptQwen3-4B (primary, no internet)
@@ -16,12 +18,14 @@ FALLBACK CHAIN:
   6. GEMINI:     Gemini-2.0-Flash (free, excellent Russian)
   7. OPENROUTER: Llama-3.3-70B:free (free, many models)
   8. CEREBRAS:   Llama-3.3-70B (free, ultra-fast ~0.3s)
-  9. POLLINATIONS: 33 models (7 always + 5 balance + 8 premium-sometimes + 13 premium-402)
+  9. LLM7:       qwen3-235b (FREE, NO key needed, GPT-4 class!) ⭐ v7.1
+  10. CHUTES:    DeepSeek-V3/Qwen3-235B (free with key) ⭐ v7.1
+  11. POLLINATIONS: 35 models (9 always + 6 balance + 8 premium-sometimes + 12 premium-402)
 
 ROUTE STRATEGY:
-  CHAT     → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
-  COMMENT  → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (free only)
-  FUNCTION → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
+  CHAT     → Local → GitHub → DeepInfra → HF → Groq → Gemini → OR → Cerebras → LLM7 → Chutes → Pollinations (auth)
+  COMMENT  → GitHub → DeepInfra → HF → Groq → Gemini → OR → Cerebras → LLM7 → Pollinations (free only)
+  FUNCTION → Local → GitHub → DeepInfra → HF → Groq → Gemini → OR → Cerebras → LLM7 → Chutes → Pollinations (auth)
 
 PERSONALITY:
 - Даша общается естественно, как живой человек. Не делает проблем из вопроса «ты бот?».
@@ -48,6 +52,8 @@ from ai.providers.gemini_provider import GeminiProvider
 from ai.providers.openrouter_provider import OpenRouterProvider
 from ai.providers.cerebras_provider import CerebrasProvider
 from ai.providers.deepinfra_provider import DeepInfraProvider
+from ai.providers.llm7_provider import LLM7Provider
+from ai.providers.chutes_provider import ChutesProvider
 from ai.providers.provider_manager import (
     ProviderManager, ROUTE_CHAT, ROUTE_COMMENT, ROUTE_FUNCTION,
 )
@@ -551,7 +557,27 @@ class AIRouter:
             providers.append(("cerebras", cerebras))
             logger.info("Cerebras provider configured (API key)")
 
-        # 9. Pollinations (free, NO KEY NEEDED — always available)
+        # 9. LLM7.io (FREE, NO KEY NEEDED — qwen3-235b, GPT-4 class Russian!) ⭐ v7.1
+        llm7 = None
+        try:
+            llm7_api_key = getattr(config, 'LLM7_API_KEY', '') or ''
+            llm7 = LLM7Provider(api_key=llm7_api_key)
+            providers.append(("llm7", llm7))
+            logger.info("LLM7.io provider configured (FREE, no key needed, qwen3-235b)")
+        except Exception as e:
+            logger.warning(f"LLM7.io init failed: {e}")
+
+        # 10. Chutes AI (free with key — DeepSeek-V3, Qwen3-235B) ⭐ v7.1
+        chutes = None
+        chutes_key = getattr(config, 'CHUTES_API_KEY', '') or ''
+        if chutes_key:
+            chutes = ChutesProvider(api_key=chutes_key)
+            providers.append(("chutes", chutes))
+            logger.info("Chutes AI provider configured (API key — DeepSeek-V3/Qwen3-235B)")
+        else:
+            logger.info("Chutes AI: no CHUTES_API_KEY configured (optional, skipped)")
+
+        # 11. Pollinations (free, NO KEY NEEDED — always available)
         pollinations = PollinationsProvider(
             api_key=config.POLLINATIONS_API_KEY,
             base_url=config.POLLINATIONS_BASE_URL,
@@ -563,7 +589,7 @@ class AIRouter:
         available = [name for name, p in providers if p]
         pollinations_status = "auth+free" if config.POLLINATIONS_API_KEY else "free-only"
         logger.info(
-            f"AI Router v7.0 initialized — "
+            f"AI Router v7.1 initialized — "
             f"providers: {' → '.join(available)} "
             f"(Pollinations: {pollinations_status})"
         )
@@ -579,6 +605,8 @@ class AIRouter:
             gemini=gemini,
             openrouter=openrouter,
             cerebras=cerebras,
+            llm7=llm7,
+            chutes=chutes,
             local_system_prompt=LOCAL_MODEL_SYSTEM_PROMPT,
         )
         self._initialized = True

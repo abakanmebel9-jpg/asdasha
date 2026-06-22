@@ -1,33 +1,34 @@
-"""DeepInfra AI Provider — Free tier with powerful models.
+"""Chutes AI Provider — Free open-source models via chutes.ai.
 
-DeepInfra (deepinfra.com):
-  Endpoint: https://api.deepinfra.com/v1/openai/chat/completions
-  Auth: Free API key from deepinfra.com
-  Compatible: OpenAI Chat Completions format
+Chutes AI (llm.chutes.ai):
+  Endpoint: https://llm.chutes.ai/v1/chat/completions
+  Auth: Free API key from chutes.ai (registration required)
+  Compatible: OpenAI Chat Completions format (drop-in replacement)
 
 Available FREE models (2026, excellent for Russian):
-  - Qwen/Qwen3-32B — Excellent Russian, 32B, best quality
-  - Qwen/Qwen3.7-Max — Excellent Russian, latest Qwen
-  - meta-llama/Meta-Llama-3.1-8B-Instruct — Good Russian, fast
-  - meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo — Good Russian, ultra-fast
-  - mistralai/Mistral-Small-24B-Instruct-2501 — Good Russian
+  - deepseek-ai/DeepSeek-V3      — Excellent Russian, 685B MoE, top quality
+  - Qwen/Qwen3-32B               — Excellent Russian, 32B, fast
+  - google/gemma-4-31b-it         — Good Russian, Google model
+  - THUDM/GLM-5.1-0414           — Good Russian, reasoning
+  - moonshotai/Kimi-K2.6          — Good Russian, reasoning
+  - Qwen/Qwen3-235B-A22B         — Best Russian, 235B MoE (may be rate-limited)
 
-Rate Limits (free tier, 2026):
-  - ~10-20 RPM depending on model
-  - Requires captcha for anonymous use (API key bypasses this)
-  - Free credits on signup
+Rate Limits (free tier):
+  - ~20 RPM per model
+  - Requires free API key (register at chutes.ai)
   - No credit card required
+  - Models may be temporarily unavailable (auto-fallback handles this)
 
-How to get API key:
-  1. Go to deepinfra.com
-  2. Sign up (free, Google/GitHub auth)
-  3. Go to API Keys → Create Key
-  4. Copy key to DEEPINFRA_API_KEY in .env
-
-KEY ADVANTAGE: DeepInfra has the Qwen3-32B model — one of the best
+KEY ADVANTAGE: Access to DeepSeek-V3 and Qwen3-235B — among the best
 open-weight models for Russian language, comparable to GPT-4 class quality.
 
-Reference: https://deepinfra.com/docs
+How to get API key:
+  1. Go to chutes.ai
+  2. Sign up (free)
+  3. Go to API Keys → Create Key (starts with cpk_)
+  4. Copy key to CHUTES_API_KEY in .env
+
+Reference: https://chutes.ai
 """
 
 import logging
@@ -38,35 +39,35 @@ import httpx
 
 from ai.providers.base import BaseAIProvider, AIResponse
 
-logger = logging.getLogger("dasha.ai.deepinfra")
+logger = logging.getLogger("dasha.ai.chutes")
 
-# ── DeepInfra API ──
-DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
-CHAT_URL = f"{DEEPINFRA_BASE_URL}/chat/completions"
+# ── Chutes AI API (OpenAI-compatible) ──
+CHUTES_BASE_URL = "https://llm.chutes.ai/v1"
+CHAT_URL = f"{CHUTES_BASE_URL}/chat/completions"
 
-# Models optimized for Russian (ranked by quality)
+# Models optimized for Russian (ranked by quality for Dasha bot)
 RUSSIAN_MODELS = [
-    "Qwen/Qwen3-32B",                                # Best Russian quality (32B)
-    "Qwen/Qwen3.7-Max",                              # Latest Qwen, excellent RU
-    "mistralai/Mistral-Small-24B-Instruct-2501",     # Good Russian, fast
-    "meta-llama/Meta-Llama-3.1-8B-Instruct",         # Good Russian, fast
-    "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",   # Good Russian, ultra-fast
-    "Qwen/Qwen3-235B-A22B",                          # Best open-weight RU, 235B MoE ⭐ v7.1
+    "deepseek-ai/DeepSeek-V3",       # Best Russian, 685B MoE, top quality
+    "Qwen/Qwen3-32B",                # Excellent Russian, 32B
+    "Qwen/Qwen3-235B-A22B",          # Best Russian, 235B MoE (may be slow)
+    "google/gemma-4-31b-it",          # Good Russian, Google
+    "THUDM/GLM-5.1-0414",            # Good Russian, reasoning
+    "moonshotai/Kimi-K2.6",          # Good Russian, reasoning
 ]
 
-DEFAULT_MODEL = "Qwen/Qwen3-32B"
+DEFAULT_MODEL = "deepseek-ai/DeepSeek-V3"
 
 
-class DeepInfraProvider(BaseAIProvider):
-    """DeepInfra AI provider — free tier with powerful models (Qwen3-32B etc)."""
+class ChutesProvider(BaseAIProvider):
+    """Chutes AI provider — free models including DeepSeek-V3 and Qwen3-235B."""
 
-    name = "deepinfra"
+    name = "chutes"
 
     def __init__(self, api_key: str = "", **kwargs):
         super().__init__(
-            name="deepinfra",
+            name="chutes",
             api_key=api_key,
-            base_url=DEEPINFRA_BASE_URL,
+            base_url=CHUTES_BASE_URL,
             **kwargs,
         )
         self._success_count = 0
@@ -79,6 +80,7 @@ class DeepInfraProvider(BaseAIProvider):
     async def is_available(self) -> bool:
         if not self.api_key:
             return False
+        # Check if at least one model is not in cooldown
         now = time.time()
         for model in RUSSIAN_MODELS:
             if now >= self._model_cooldowns.get(model, 0):
@@ -98,8 +100,8 @@ class DeepInfraProvider(BaseAIProvider):
 
         if not self.api_key:
             return AIResponse(
-                text="", model=model, provider="deepinfra",
-                error="No DeepInfra API key configured",
+                text="", model=model, provider="chutes",
+                error="No Chutes API key configured",
             )
 
         headers = {
@@ -129,7 +131,7 @@ class DeepInfraProvider(BaseAIProvider):
 
             start = time.time()
             try:
-                async with httpx.AsyncClient(timeout=45.0) as client:
+                async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.post(
                         CHAT_URL,
                         headers=headers,
@@ -138,25 +140,29 @@ class DeepInfraProvider(BaseAIProvider):
 
                     if response.status_code == 401:
                         return AIResponse(
-                            text="", model=try_model, provider="deepinfra",
+                            text="", model=try_model, provider="chutes",
                             error="Unauthorized — check API key",
                         )
                     if response.status_code == 402:
                         self._model_cooldowns[try_model] = time.time() + self._cooldown_duration
-                        logger.debug(f"DeepInfra: {try_model} payment required (402)")
+                        logger.debug(f"Chutes: {try_model} payment required (402)")
                         continue
                     if response.status_code == 429:
                         self._model_cooldowns[try_model] = time.time() + 120
-                        logger.debug(f"DeepInfra: {try_model} rate limited (429)")
+                        logger.debug(f"Chutes: {try_model} rate limited (429)")
+                        continue
+                    if response.status_code == 404:
+                        self._model_cooldowns[try_model] = time.time() + 600
+                        logger.debug(f"Chutes: {try_model} not found (404)")
                         continue
                     if response.status_code in (500, 502, 503):
                         self._model_cooldowns[try_model] = time.time() + 180
-                        logger.debug(f"DeepInfra: {try_model} server error ({response.status_code})")
+                        logger.debug(f"Chutes: {try_model} server error ({response.status_code})")
                         continue
                     if response.status_code != 200:
                         body = response.text[:200]
                         return AIResponse(
-                            text="", model=try_model, provider="deepinfra",
+                            text="", model=try_model, provider="chutes",
                             error=f"HTTP {response.status_code}: {body}",
                         )
 
@@ -172,28 +178,29 @@ class DeepInfraProvider(BaseAIProvider):
                         return AIResponse(
                             text=text.strip(),
                             model=try_model,
-                            provider="deepinfra",
+                            provider="chutes",
                             tokens_used=data.get("usage", {}).get("total_tokens", 0),
                             latency_ms=elapsed,
                         )
                     else:
-                        logger.debug(f"DeepInfra: {try_model} returned empty response")
+                        logger.debug(f"Chutes: {try_model} returned empty response")
                         continue
 
             except httpx.TimeoutException:
                 self._fail_count += 1
                 self._model_cooldowns[try_model] = time.time() + 120
-                logger.debug(f"DeepInfra: {try_model} timed out")
+                logger.debug(f"Chutes: {try_model} timed out")
                 continue
             except Exception as e:
                 self._fail_count += 1
-                logger.error(f"DeepInfra error ({try_model}): {e}")
+                logger.error(f"Chutes error ({try_model}): {e}")
                 continue
 
+        # All models failed
         self._fail_count += 1
         return AIResponse(
-            text="", model=model, provider="deepinfra",
-            error=f"All DeepInfra models failed (tried {len(models_to_try)})",
+            text="", model=model, provider="chutes",
+            error=f"All Chutes models failed (tried {len(models_to_try)})",
         )
 
     def get_status(self) -> Dict:

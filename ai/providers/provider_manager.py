@@ -1,35 +1,41 @@
-"""Provider Manager v7.0 — MULTI-PROVIDER FALLBACK for Dasha Bot.
+"""Provider Manager v7.1 — MULTI-PROVIDER FALLBACK for Dasha Bot.
 
 COMPLETE FALLBACK CHAIN (tested & integrated):
   1. LOCAL:        RuadaptQwen3-4B (primary, no internet needed) — CHAT/FUNCTION only
   2. GITHUB:       GitHub Models via PAT (free, GPT-4.1-mini)
-  3. HUGGINGFACE:  HF Inference via HF_TOKEN (free, Qwen2.5/Llama-3.1/Mistral)
-  4. GROQ:         Groq free tier (free, ULTRA FAST Llama-3.3-70B)
-  5. GEMINI:       Google Gemini free (free, Gemini-2.0-Flash)
-  6. OPENROUTER:   OpenRouter free models (free, 20+ models)
-  7. CEREBRAS:     Cerebras free tier (free, ultra-fast Llama-3.3-70B)
-  8. POLLINATIONS: Pollinations v7.0 (33 auth models: 7 always + 5 balance + 8 premium-sometimes + 13 premium-402)
+  3. DEEPINFRA:    Qwen3-32B (free, excellent Russian, 32B)
+  4. HUGGINGFACE:  HF Inference via HF_TOKEN (free, Qwen2.5/Llama-3.1/Mistral)
+  5. GROQ:         Groq free tier (free, ULTRA FAST Llama-3.3-70B)
+  6. GEMINI:       Google Gemini free (free, Gemini-2.0-Flash)
+  7. OPENROUTER:   OpenRouter free models (free, 20+ models)
+  8. CEREBRAS:     Cerebras free tier (free, ultra-fast Llama-3.3-70B)
+  9. LLM7:         LLM7.io (FREE, NO key needed, qwen3-235b GPT-4 class!) ⭐ v7.1
+  10. CHUTES:      Chutes AI (free, DeepSeek-V3/Qwen3-235B) ⭐ v7.1
+  11. POLLINATIONS: Pollinations v7.1 (35 auth models: 9 always + 6 balance + 8 premium-sometimes + 12 premium-402)
 
 NOTE: Local model is BYPASSED for COMMENT route (group messages) because it
 takes ~85s per response — too slow for real-time chat. See LOCAL_FOR_COMMENTS.
 
-NOTE: Pollinations v7.0 — 33 auth models tiered by availability:
-  - 7 ALWAYS working (openai, mistral, gemma, nova-fast, llama-scout, qwen-coder, mistral-small-3.2)
-  - 5 BALANCE-DEPENDENT (gpt-5.4-mini, llama, perplexity-fast, deepseek, perplexity-deep)
+NOTE: LLM7.io is the ONLY provider that requires NO API key at all —
+qwen3-235b gives GPT-4 class Russian quality for free, no registration.
+Placed before Pollinations in the chain for better quality fallback.
+
+NOTE: Pollinations v7.1 — 35 auth models tiered by availability:
+  - 9 ALWAYS working (openai, mistral, gemma, nova-fast, llama-scout, qwen-coder,
+    mistral-small-3.2, mistral-small ⭐, llama-3.3 ⭐)
+  - 6 BALANCE-DEPENDENT (gpt-5.4-mini, llama, perplexity-fast, deepseek, perplexity-deep, openai-fast ⭐)
   - 8 PREMIUM-SOMETIMES (grok, grok-large, mistral-large, nova, qwen-vision, qwen-vision-pro, step-3.5-flash, step-flash)
-  - 13 PREMIUM-ALWAYS-402 (kept as best-effort fallbacks)
+  - 12 PREMIUM-ALWAYS-402 (kept as best-effort fallbacks)
 For COMMENT route, Pollinations skips auth and uses the free anonymous tier.
-This preserves the API key quota for high-quality responses in private chats
-and channel posts where quality matters most.
 
 All providers are OpenAI-compatible except local (llama-cpp).
 Each provider is only tried if it has an API key configured.
-Pollinations is always available as absolute last resort.
+LLM7 and Pollinations are always available (no key needed).
 
 ROUTE STRATEGY:
-  CHAT     → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
-  COMMENT  → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (free only, NO local, NO auth)
-  FUNCTION → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
+  CHAT     → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → LLM7 → Chutes → Pollinations (auth)
+  COMMENT  → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → LLM7 → Pollinations (free only, NO local, NO auth)
+  FUNCTION → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → LLM7 → Chutes → Pollinations (auth)
 """
 
 from __future__ import annotations
@@ -46,6 +52,8 @@ from .gemini_provider import GeminiProvider
 from .openrouter_provider import OpenRouterProvider
 from .cerebras_provider import CerebrasProvider
 from .deepinfra_provider import DeepInfraProvider
+from .llm7_provider import LLM7Provider
+from .chutes_provider import ChutesProvider
 
 logger = logging.getLogger("dasha.ai.provider_manager")
 
@@ -70,6 +78,8 @@ class ProviderManager:
         gemini: Optional[GeminiProvider] = None,
         openrouter: Optional[OpenRouterProvider] = None,
         cerebras: Optional[CerebrasProvider] = None,
+        llm7: Optional[LLM7Provider] = None,
+        chutes: Optional[ChutesProvider] = None,
         local_system_prompt: str = "",
     ) -> None:
         self.pollinations = pollinations
@@ -81,6 +91,8 @@ class ProviderManager:
         self.gemini = gemini
         self.openrouter = openrouter
         self.cerebras = cerebras
+        self.llm7 = llm7
+        self.chutes = chutes
         # Compact system prompt for the 4B local model (long prompts degrade
         # quality on small models). Empty = use the full prompt from messages.
         self.local_system_prompt = local_system_prompt
@@ -227,8 +239,8 @@ class ProviderManager:
     def _build_fallback_chain(self) -> List[BaseAIProvider]:
         """Build ordered list of cloud providers (with keys configured).
 
-        Order: GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
-        Pollinations is always last (no key needed).
+        Order: GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → LLM7 → Chutes → Pollinations
+        LLM7 and Pollinations are always available (no key needed).
         """
         chain: List[BaseAIProvider] = []
 
@@ -246,6 +258,14 @@ class ProviderManager:
             chain.append(self.openrouter)
         if self.cerebras:
             chain.append(self.cerebras)
+
+        # LLM7 — FREE, no key needed, qwen3-235b (GPT-4 class Russian)
+        if self.llm7:
+            chain.append(self.llm7)
+
+        # Chutes — free with key, DeepSeek-V3 and Qwen3-235B
+        if self.chutes:
+            chain.append(self.chutes)
 
         # Pollinations — always available, absolute last resort
         chain.append(self.pollinations)
@@ -326,7 +346,8 @@ class ProviderManager:
 
     async def close(self) -> None:
         for p in [self.local, self.pollinations, self.github, self.deepinfra,
-                   self.huggingface, self.groq, self.gemini, self.openrouter, self.cerebras]:
+                   self.huggingface, self.groq, self.gemini, self.openrouter,
+                   self.cerebras, self.llm7, self.chutes]:
             if p:
                 await p.close()
 
@@ -346,6 +367,8 @@ class ProviderManager:
             ("gemini", self.gemini),
             ("openrouter", self.openrouter),
             ("cerebras", self.cerebras),
+            ("llm7", self.llm7),
+            ("chutes", self.chutes),
             ("pollinations", self.pollinations),
         ]:
             if p:

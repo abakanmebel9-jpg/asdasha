@@ -64,9 +64,12 @@ CHAT_URL = f"{GITHUB_MODELS_BASE}/chat/completions"
 RUSSIAN_MODELS = [
     "openai/gpt-4.1-mini",                # Best Russian quality (low tier), fast
     "openai/gpt-4o-mini",                  # Good Russian (low tier), fast
+    "openai/gpt-4.1-nano",                 # Good Russian (low tier), fastest OpenAI
     "mistral-ai/mistral-medium-2505",      # Good Russian (low tier), multimodal
     "microsoft/phi-4",                     # Good Russian (low tier), strong reasoning
+    "microsoft/phi-4-mini-instruct",       # Fast, decent Russian (low tier)
     "meta/llama-3.3-70b-instruct",         # Excellent Russian (high tier), 70B
+    "deepseek/deepseek-v3-0324",           # Good Russian (high tier)
 ]
 
 DEFAULT_MODEL = "openai/gpt-4.1-mini"
