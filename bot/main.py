@@ -416,6 +416,8 @@ async def main():
     cloud_providers = []
     if config.GH_PAT_TOKEN:
         cloud_providers.append("GitHub Models")
+    if getattr(config, 'DEEPINFRA_API_KEY', ''):
+        cloud_providers.append("DeepInfra")
     if config.HF_TOKEN:
         cloud_providers.append("HuggingFace")
     if config.GROQ_API_KEY:

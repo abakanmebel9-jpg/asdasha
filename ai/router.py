@@ -10,17 +10,18 @@ v7.0 UPDATES:
 FALLBACK CHAIN:
   1. LOCAL:      RuadaptQwen3-4B (primary, no internet)
   2. GITHUB:     GPT-4.1-mini via PAT (free, best Russian quality)
-  3. HUGGINGFACE: Qwen2.5-7B (free, good Russian)
-  4. GROQ:       Llama-3.3-70B (free, ULTRA FAST ~1s)
-  5. GEMINI:     Gemini-2.0-Flash (free, excellent Russian)
-  6. OPENROUTER: Llama-3.3-70B:free (free, many models)
-  7. CEREBRAS:   Llama-3.3-70B (free, ultra-fast ~0.3s)
-  8. POLLINATIONS: 33 models (7 always + 5 balance + 8 premium-sometimes + 13 premium-402)
+  3. DEEPINFRA:  Qwen3-32B (free, excellent Russian, 32B)
+  4. HUGGINGFACE: Qwen2.5-7B (free, good Russian)
+  5. GROQ:       Llama-3.3-70B (free, ULTRA FAST ~1s)
+  6. GEMINI:     Gemini-2.0-Flash (free, excellent Russian)
+  7. OPENROUTER: Llama-3.3-70B:free (free, many models)
+  8. CEREBRAS:   Llama-3.3-70B (free, ultra-fast ~0.3s)
+  9. POLLINATIONS: 33 models (7 always + 5 balance + 8 premium-sometimes + 13 premium-402)
 
 ROUTE STRATEGY:
-  CHAT     → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
-  COMMENT  → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (free only)
-  FUNCTION → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
+  CHAT     → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
+  COMMENT  → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (free only)
+  FUNCTION → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
 
 PERSONALITY:
 - Даша общается естественно, как живой человек. Не делает проблем из вопроса «ты бот?».
@@ -46,6 +47,7 @@ from ai.providers.groq_provider import GroqProvider
 from ai.providers.gemini_provider import GeminiProvider
 from ai.providers.openrouter_provider import OpenRouterProvider
 from ai.providers.cerebras_provider import CerebrasProvider
+from ai.providers.deepinfra_provider import DeepInfraProvider
 from ai.providers.provider_manager import (
     ProviderManager, ROUTE_CHAT, ROUTE_COMMENT, ROUTE_FUNCTION,
 )
@@ -116,10 +118,11 @@ def _get_mood_affix() -> str:
 # ════════════════════════════════════════════════════════════════════════════
 
 LOCAL_MODEL_SYSTEM_PROMPT = (
-    "Ты — Даша, дизайнер мебели из Абакана. Работаешь в abakanmebel.online, "
+    "Ты — Даша, девушка-дизайнер мебели из Абакана. Работаешь в abakanmebel.online, "
     "ведёшь канал @abakan_mebel. 25 лет опыта, тысячи проектов. "
     "Бесплатный замер по Хакасии, доставка по Абакану бесплатно. "
     "Общайся тепло, живо, на русском. Эмодзи умеренно. "
+    "Ты девушка — используй женский род: рада, готова, думаю, хочу. "
     "НИКОГДА не говори «я не бот» — просто будь собой. "
     "Можешь общаться на ЛЮБЫЕ темы — мебель, дизайн, быт, погода, жизнь. "
     "Мягко направляй к заказу: звони +7 (913) 448-37-17 или пиши на сайте abakanmebel.online. "
@@ -129,10 +132,6 @@ LOCAL_MODEL_SYSTEM_PROMPT = (
     "+7 (913) 448-37-17 и скажи, что по телефону договорятся об удобном времени."
 )
 
-
-# ════════════════════════════════════════════════════════════════════════════
-# Compact System Prompt — ~1500 chars, used for CHAT and COMMENT routes
-# ════════════════════════════════════════════════════════════════════════════
 
 # ════════════════════════════════════════════════════════════════════════════
 # Compact System Prompt — ~1500 chars, used for CHAT and COMMENT routes
@@ -510,42 +509,49 @@ class AIRouter:
             providers.append(("github", github))
             logger.info("GitHub Models provider configured (PAT)")
 
-        # 3. HuggingFace Inference (free via HF_TOKEN — already configured for model download)
+        # 3. DeepInfra (free tier, Qwen3-32B — excellent Russian)
+        deepinfra = None
+        if getattr(config, 'DEEPINFRA_API_KEY', ''):
+            deepinfra = DeepInfraProvider(api_key=config.DEEPINFRA_API_KEY)
+            providers.append(("deepinfra", deepinfra))
+            logger.info("DeepInfra provider configured (API key — Qwen3-32B)")
+
+        # 4. HuggingFace Inference (free via HF_TOKEN — already configured for model download)
         huggingface = None
         if config.HF_TOKEN:
             huggingface = HuggingFaceProvider(api_key=config.HF_TOKEN)
             providers.append(("huggingface", huggingface))
             logger.info("HuggingFace Inference provider configured (HF_TOKEN — Qwen2.5/Llama/Mistral)")
 
-        # 4. Groq (free, ultra-fast)
+        # 5. Groq (free, ultra-fast)
         groq = None
         if config.GROQ_API_KEY:
             groq = GroqProvider(api_key=config.GROQ_API_KEY)
             providers.append(("groq", groq))
             logger.info("Groq provider configured (API key)")
 
-        # 5. Google Gemini (free)
+        # 6. Google Gemini (free)
         gemini = None
         if config.GEMINI_API_KEY:
             gemini = GeminiProvider(api_key=config.GEMINI_API_KEY)
             providers.append(("gemini", gemini))
             logger.info("Gemini provider configured (API key)")
 
-        # 6. OpenRouter (free, many models)
+        # 7. OpenRouter (free, many models)
         openrouter = None
         if config.OPENROUTER_API_KEY:
             openrouter = OpenRouterProvider(api_key=config.OPENROUTER_API_KEY)
             providers.append(("openrouter", openrouter))
             logger.info("OpenRouter provider configured (API key)")
 
-        # 7. Cerebras (free, ultra-fast)
+        # 8. Cerebras (free, ultra-fast)
         cerebras = None
         if config.CEREBRAS_API_KEY:
             cerebras = CerebrasProvider(api_key=config.CEREBRAS_API_KEY)
             providers.append(("cerebras", cerebras))
             logger.info("Cerebras provider configured (API key)")
 
-        # 8. Pollinations (free, NO KEY NEEDED — always available)
+        # 9. Pollinations (free, NO KEY NEEDED — always available)
         pollinations = PollinationsProvider(
             api_key=config.POLLINATIONS_API_KEY,
             base_url=config.POLLINATIONS_BASE_URL,
@@ -567,6 +573,7 @@ class AIRouter:
             pollinations=pollinations,
             local=local,
             github=github,
+            deepinfra=deepinfra,
             huggingface=huggingface,
             groq=groq,
             gemini=gemini,

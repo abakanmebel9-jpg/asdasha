@@ -77,6 +77,11 @@ class BotConfig:
     POLLINATIONS_API_KEY: str = os.getenv("POLLINATIONS_API_KEY", "")
     POLLINATIONS_BASE_URL: str = os.getenv("POLLINATIONS_BASE_URL", "https://gen.pollinations.ai")
 
+    # 6b. DeepInfra — FREE tier, Qwen3-32B (excellent Russian)
+    #    Get key: deepinfra.com → Sign up → API Keys
+    #    Models: Qwen3-32B (best open-weight RU), Qwen3.7-Max, Llama-3.1-8B
+    DEEPINFRA_API_KEY: str = os.getenv("DEEPINFRA_API_KEY", "")
+
     # 7. HuggingFace Inference — FREE via HF_TOKEN (router.huggingface.co)
     #    Uses the SAME HF_TOKEN already configured for model download.
     #    Models: Qwen2.5-7B, Llama-3.1-8B, Mistral-7B (good Russian)

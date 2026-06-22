@@ -245,6 +245,8 @@ jobs:
           # 6. Pollinations (no key needed — always available last resort)
           POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
           POLLINATIONS_BASE_URL: "https://gen.pollinations.ai"
+          # 6b. DeepInfra (free tier, Qwen3-32B — excellent Russian)
+          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
 
           # HuggingFace — for model download AND free LLM inference (Qwen2.5/Llama/Mistral)
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -294,6 +296,7 @@ jobs:
           [ -n "$OPENROUTER_API_KEY" ] && echo "  ✅ OpenRouter (20+ models)" || echo "  ⏭️  OpenRouter (no key)"
           [ -n "$CEREBRAS_API_KEY" ] && echo "  ✅ Cerebras (ultra-fast)" || echo "  ⏭️  Cerebras (no key)"
           [ -n "$POLLINATIONS_API_KEY" ] && echo "  ✅ Pollinations v7.0 (33 auth models: 7 always + 5 balance + 8 premium + 13 402)" || echo "  ⏭️  Pollinations (free tier only, no key)"
+          [ -n "$DEEPINFRA_API_KEY" ] && echo "  ✅ DeepInfra (Qwen3-32B, excellent Russian)" || echo "  ⏭️  DeepInfra (no key)"
           echo ""
 
           RETRY=0

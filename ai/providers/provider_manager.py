@@ -27,9 +27,9 @@ Each provider is only tried if it has an API key configured.
 Pollinations is always available as absolute last resort.
 
 ROUTE STRATEGY:
-  CHAT     → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
-  COMMENT  → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (free only, NO local, NO auth)
-  FUNCTION → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
+  CHAT     → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
+  COMMENT  → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (free only, NO local, NO auth)
+  FUNCTION → Local → GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ from .groq_provider import GroqProvider
 from .gemini_provider import GeminiProvider
 from .openrouter_provider import OpenRouterProvider
 from .cerebras_provider import CerebrasProvider
+from .deepinfra_provider import DeepInfraProvider
 
 logger = logging.getLogger("dasha.ai.provider_manager")
 
@@ -63,6 +64,7 @@ class ProviderManager:
         pollinations: PollinationsProvider,
         local: Optional[LocalProvider] = None,
         github: Optional[GitHubModelsProvider] = None,
+        deepinfra: Optional[DeepInfraProvider] = None,
         huggingface: Optional[HuggingFaceProvider] = None,
         groq: Optional[GroqProvider] = None,
         gemini: Optional[GeminiProvider] = None,
@@ -73,6 +75,7 @@ class ProviderManager:
         self.pollinations = pollinations
         self.local = local
         self.github = github
+        self.deepinfra = deepinfra
         self.huggingface = huggingface
         self.groq = groq
         self.gemini = gemini
@@ -224,13 +227,15 @@ class ProviderManager:
     def _build_fallback_chain(self) -> List[BaseAIProvider]:
         """Build ordered list of cloud providers (with keys configured).
 
-        Order: GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
+        Order: GitHub → DeepInfra → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
         Pollinations is always last (no key needed).
         """
         chain: List[BaseAIProvider] = []
 
         if self.github:
             chain.append(self.github)
+        if self.deepinfra:
+            chain.append(self.deepinfra)
         if self.huggingface:
             chain.append(self.huggingface)
         if self.groq:
@@ -320,8 +325,8 @@ class ProviderManager:
         return True
 
     async def close(self) -> None:
-        for p in [self.local, self.pollinations, self.github, self.huggingface,
-                   self.groq, self.gemini, self.openrouter, self.cerebras]:
+        for p in [self.local, self.pollinations, self.github, self.deepinfra,
+                   self.huggingface, self.groq, self.gemini, self.openrouter, self.cerebras]:
             if p:
                 await p.close()
 
@@ -335,6 +340,7 @@ class ProviderManager:
         for name, p in [
             ("local", self.local),
             ("github", self.github),
+            ("deepinfra", self.deepinfra),
             ("huggingface", self.huggingface),
             ("groq", self.groq),
             ("gemini", self.gemini),
