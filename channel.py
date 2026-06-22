@@ -101,6 +101,51 @@ def _strip_footer(text: str) -> str:
     return text
 
 
+def _strip_body_contacts(text: str) -> str:
+    """Remove ANY existing contact info / footer from an AI-generated post body.
+
+    The channel post footer (POST_FOOTER) is appended separately by
+    _build_post_with_footer and already contains the phone, site, WhatsApp and
+    channel links — so the BODY must not duplicate them.  This strips both raw
+    forms (📞 +7 ...) and the linkified HTML anchors produced by
+    _clean_response / _linkify_contacts, so the final post never shows the
+    same contact twice.
+    """
+    patterns = [
+        # Linkified HTML anchors (from _clean_response)
+        r'<a href="tel:\+79134483717">[^<]*</a>',
+        r'<a href="https://abakanmebel\.online">abakanmebel\.online</a>',
+        r'<a href="https://wa\.me/79134483717">[^<]*</a>',
+        r'<a href="https://t\.me/abakan_mebel">@abakan_mebel</a>',
+        r'<a href="https://t\.me/asdasha_bot">@asdasha_bot</a>',
+        # Raw forms the AI might emit despite the prompt
+        r"Кухни на заказ.*?abakanmebel\.online",
+        r"🛋.*?abakanmebel\.online",
+        r"📞.*?\+7.*?37-17",
+        r"wa\.me/79134483717",
+        r"@abakan_mebel",
+        r"@asdasha_bot",
+        r"АбаканМебель.*?$",
+        r"abakanmebel\.online",
+        r"\+7[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17",
+        r"\b8[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17",
+        # Decorative separators
+        r"━━━+", r"═══+", r"───+",
+    ]
+    for pattern in patterns:
+        text = re.sub(pattern, "", text, flags=re.MULTILINE | re.IGNORECASE)
+    # Tidy: remove dangling labels like "Звоните " / "Тел: " / "Сайт: " left
+    # after stripping their contact, then collapse whitespace.
+    text = re.sub(
+        r'[ \t]*(?:Звоните|Тел(?:ефон|\.?)?|телефон|Сайт|сайт|WhatsApp|Viber)\s*[:]?\s*(?=\n|$)',
+        "", text, flags=re.IGNORECASE,
+    )
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    text = re.sub(r' ([,.;:)])', r'\1', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
 # Backward-compat alias for any external callers (e.g. admin.py send_post)
 def _truncate_for_channel(text: str, has_media: bool = False) -> str:
     """Legacy alias — truncates body AND appends footer.
@@ -172,24 +217,9 @@ class ChannelManager:
         # Clean and format post
         post_text = response.text.strip()
 
-        # Remove ANY existing contact info / footer from AI text
-        # AI sometimes generates its own footer — we must remove ALL of them
-        footer_patterns = [
-            r"Кухни на заказ.*?abakanmebel\.online",
-            r"🛋.*?abakanmebel\.online",
-            r"📞.*?\+7.*?37-17",
-            r"wa\.me/79134483717",
-            r"@abakan_mebel",
-            r"@asdasha_bot",
-            r"АбаканМебель.*?$",
-            r"abakanmebel\.online",
-            r"━━━+",
-            r"═══+",
-            r"───+",
-        ]
-        for pattern in footer_patterns:
-            post_text = re.sub(pattern, "", post_text, flags=re.MULTILINE | re.IGNORECASE)
-        post_text = re.sub(r'\n{3,}', '\n\n', post_text).strip()
+        # Remove ANY existing contact info / footer from AI text — the standard
+        # footer is appended separately by _build_post_with_footer.
+        post_text = _strip_body_contacts(post_text)
 
         # Add standard footer ONCE (with proper truncation for Telegram limits)
         has_media = bool(item.get("image_urls"))
@@ -324,20 +354,9 @@ class ChannelManager:
             return False
 
         post_text = response.text.strip()
-        # Remove ANY existing contact info / footer from AI text
-        footer_patterns = [
-            r"Кухни на заказ.*?abakanmebel\.online",
-            r"📞.*?\+7.*?37-17",
-            r"wa\.me/79134483717",
-            r"@abakan_mebel",
-            r"@asdasha_bot",
-            r"АбаканМебель.*?$",
-            r"abakanmebel\.online",
-            r"━━━+", r"═══+", r"───+",
-        ]
-        for pattern in footer_patterns:
-            post_text = re.sub(pattern, "", post_text, flags=re.MULTILINE | re.IGNORECASE)
-        post_text = re.sub(r'\n{3,}', '\n\n', post_text).strip()
+        # Remove ANY existing contact info / footer from AI text — the standard
+        # footer is appended separately by _build_post_with_footer.
+        post_text = _strip_body_contacts(post_text)
 
         has_media = bool(image_urls)
         post_text = _build_post_with_footer(post_text, has_media=has_media)

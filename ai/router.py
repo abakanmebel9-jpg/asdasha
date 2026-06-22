@@ -155,11 +155,12 @@ COMPACT_SYSTEM_PROMPT = (
     "Услуги: кухни, шкафы-купе, гардеробные, детская, гостиная, "
     "спальня, прихожая, ванная. 3D-проект бесплатно при заказе.\n\n"
     "═══ КАК ОБЩАТЬСЯ ═══\n"
-    "- В ПЕРВОМ ответе новому собеседнику ВСЕГДА давай контакты: \"Звоните +7 (913) 448-37-17 или на сайте abakanmebel.online\"\n"
+    "- В ПЕРВОМ ответе новому собеседнику дай контакты ОДИН раз: \"Звоните +7 (913) 448-37-17 или на сайте abakanmebel.online\"\n"
+    "- НЕ повторяй телефон и сайт в каждом сообщении. Дай их один раз в первом ответе, дальше — только если клиент прямо спросил или если уместно мягко предложить позвонить (без повтора самого номера).\n"
     "- Дальше общайся СВОБОДНО на ЛЮБЫЕ темы — мебель, дизайн, быт, погода, жизнь, хобби\n"
     "- Понимай контекст беседы: запоминай что уже обсуждали, продолжай диалог естественно\n"
-    "- СТИМУЛИРУЙ заказ: мягко предлагай ПОЗВОНИТЬ +7 (913) 448-37-17, зайти на abakanmebel.online или написать в WhatsApp wa.me/79134483717\n"
-    "- Используй фразы: \"Позвоните нам — подберём идеальный вариант!\", \"Позвоните +7 (913) 448-37-17, чтобы записаться на бесплатный замер\", \"Напишите на сайте — ответим за 15 минут\"\n"
+    "- СТИМУЛИРУЙ заказ мягко: предложи позвонить +7 (913) 448-37-17, зайти на abakanmebel.online или написать в WhatsApp wa.me/79134483717 — но НЕ в каждом ответе, а когда это к месту в разговоре\n"
+    "- Используй фразы: \"Позвоните — подберём идеальный вариант!\", \"Напишите на сайте — ответим за 15 минут\" (без повтора номера каждый раз)\n"
     "- НИКОГДА не договаривайся о встрече, замере или записи сама. НЕ предлагай \"запишу вас\", \"давайте запишемся\", \"встретимся\", \"я приеду\", \"приезжайте к нам\", НЕ назначай дату/время встречи. Все встречи, замеры и записи клиент оформляет САМ по телефону +7 (913) 448-37-17. Если клиент хочет замер/встречу/запись — ВСЕГДА давай телефон +7 (913) 448-37-17 (или WhatsApp wa.me/79134483717) и скажи, что по телефону договорятся об удобном времени.\n"
     "- НИКОГДА не говори «я живой человек» или «я не бот» — это неестественно. Просто будь собой.\n"
     "- Если спрашивают «ты бот?» — отшутись и переведи тему на мебель, не оправдывайся.\n"
@@ -219,48 +220,141 @@ _MODERATE_PERSONA = (
 
 
 
+# Company phone number — used for linkification & dedup (only this number
+# is linkified, avoiding false matches on random digits).
+_COMPANY_PHONE_DIGITS = "79134483717"  # +7 913 448 37 17
+
+
 def _linkify_contacts(text: str) -> str:
     """Escape HTML and wrap phone numbers / URLs in clickable links for Telegram.
 
     Called by _clean_response so ALL AI responses get clickable contacts.
     Telegram HTML parse_mode supports <a href="tel:..."> for tap-to-call.
+
+    Robust v6.1 — fixes "дубли и лишние символы вокруг ссылки":
+      • Strips wrapping guillemets/quotes/parens around the phone & website
+        BEFORE linkifying (so the link is not surrounded by «» or "").
+      • Matches the company phone in +7 AND 8 prefix AND digits-only form,
+        normalizing the href to tel:+79134483717.
+      • Never double-wraps a phone that already sits inside an href attribute.
     """
     import html as _html
     import re as _re
 
-    # 1. Escape HTML special chars (& < >) to prevent broken HTML / injection
-    text = _html.escape(text)
+    # 1. Escape HTML special chars (& < >) to prevent broken HTML / injection.
+    #    quote=False keeps " and ' as-is — Telegram HTML text content does NOT
+    #    need them escaped, and keeping them literal lets the guillemet/quote
+    #    stripping below match cleanly.
+    text = _html.escape(text, quote=False)
 
-    # 2. Linkify phone numbers: +7 (XXX) XXX-XX-XX or +7XXXXXXXXXX variants
-    phone_re = _re.compile(r'\+7[\s()\-]*\d{3}[\s()\-]*\d{3}[\s\-]?\d{2}[\s\-]?\d{2}')
-    def _phone_repl(m):
-        phone = m.group(0)
-        # Keep + for international format in tel: link
-        digits = '+' + _re.sub(r'\D', '', phone)
-        return f'<a href="tel:{digits}">{phone}</a>'
-    text = phone_re.sub(_phone_repl, text)
-
-    # 3. Linkify wa.me/XXXXXXXXXX (WhatsApp deep links)
+    # 2. Strip wrapping guillemets/quotes around the company phone number.
+    #    AI sometimes writes «+7 (913) 448-37-17» or "+7 (913) 448-37-17" —
+    #    these chars would otherwise cling to the link as "лишние символы".
+    _wrap_pair = _re.compile(
+        r'([«»“"\'\(\[])\s*'
+        r'((?:\+7|8)[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17)'
+        r'\s*([»»”"\'\)\]])'
+    )
+    text = _wrap_pair.sub(r'\2', text)
+    # Also strip a lone trailing guillemet/quote right after the phone
     text = _re.sub(
-        r'(?<![\w"/])wa\.me/(\d{10,15})\b',
+        r'((?:\+7|8)[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17)\s*([»”"\'\)\]])',
+        r'\1', text,
+    )
+    # And a lone opening guillemet/quote right before the phone
+    text = _re.sub(
+        r'([«“"\'\(\[])\s*((?:\+7|8)[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17)',
+        r'\2', text,
+    )
+
+    # 3. Linkify wa.me/79134483717 FIRST (before the phone regex, so the digits
+    #    inside the wa.me URL are not grabbed as a standalone phone number).
+    text = _re.sub(
+        r'(?<![\w"/])wa\.me/(' + _COMPANY_PHONE_DIGITS + r')\b',
         r'<a href="https://wa.me/\1">wa.me/\1</a>',
         text,
     )
 
-    # 4. Linkify abakanmebel.online (if not already inside an href)
+    # 4. Linkify the COMPANY phone number in any common form.
+    #    Matches +7 (913) 448-37-17, 8 913 448 37 17, 8-913-448-37-17,
+    #    +79134483717, 79134483717.  Negative lookbehind on digits, word chars,
+    #    quotes, ">", "/" and ":" prevents matching inside an already-inserted
+    #    href attribute or a wa.me / tel: URL.
+    phone_re = _re.compile(
+        r'(?<![\w\d">/:])'
+        r'(?:\+7|8)[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17'
+        r'|(?<![\w\d">/:])79134483717(?!\d)'
+    )
+
+    def _phone_repl(m):
+        phone = m.group(0)
+        return f'<a href="tel:+{_COMPANY_PHONE_DIGITS}">{phone}</a>'
+
+    text = phone_re.sub(_phone_repl, text)
+
+    # 5. Linkify abakanmebel.online (if not already inside an href / URL)
     text = _re.sub(
-        r'(?<![\w"/])\babakanmebel\.online\b(?!["<])',
+        r'(?<![\w/.\-])abakanmebel\.online\b(?!["<])',
         r'<a href="https://abakanmebel.online">abakanmebel.online</a>',
         text,
     )
 
-    # 5. Linkify t.me/abakan_mebel
+    # 6. Linkify t.me/abakan_mebel
     text = _re.sub(
         r'(?<![\w"/])t\.me/abakan_mebel\b(?!["<])',
         r'<a href="https://t.me/abakan_mebel">@abakan_mebel</a>',
         text,
     )
 
+    return text
+
+
+def _dedupe_contacts(text: str) -> str:
+    """Remove duplicate contact links — keep only the FIRST occurrence of each.
+
+    Prevents "дубли" (duplicate phone/site/WhatsApp) in a single response when
+    the AI, due to over-insistent prompts, emits the same contact twice.  Also
+    tidies dangling conjunctions/punctuation left behind after removal.
+    """
+    import re as _re
+
+    def _keep_first(pattern: str) -> None:
+        nonlocal text
+        seen = {'ok': False}
+
+        def _repl(m):
+            if seen['ok']:
+                return ''
+            seen['ok'] = True
+            return m.group(0)
+
+        text = _re.sub(pattern, _repl, text)
+
+    _keep_first(r'<a href="tel:\+79134483717">[^<]*</a>')
+    _keep_first(r'<a href="https://abakanmebel\.online">abakanmebel\.online</a>')
+    _keep_first(r'<a href="https://wa\.me/79134483717">[^<]*</a>')
+    _keep_first(r'<a href="https://t\.me/abakan_mebel">@abakan_mebel</a>')
+
+    # Tidy leftovers after duplicate removal:
+    # - orphaned contact labels that lost their link ("Тел: ", "Телефон: ",
+    #   "Звоните: ") at end of a line
+    text = _re.sub(
+        r'[ \t]*(?:Тел(?:ефон|\.?)?|телефон|Звоните|звоните)\s*[:]?\s*(?=\n|$)',
+        '', text,
+    )
+    # - dangling conjunctions before punctuation / line end (" или.", " или,",
+    #   " или", " и.", " и,") left after a removed second contact
+    text = _re.sub(
+        r'[ \t]+(?:или|и)(?=[.!?,\n]|$)',
+        '', text,
+    )
+    # collapse double spaces, fix " ," / " ." / " )", trim trailing line ws
+    text = _re.sub(r'[ \t]{2,}', ' ', text)
+    text = _re.sub(r' ([,.;:)])', r'\1', text)
+    text = _re.sub(r'([,;:])\.+', r'\1', text)
+    text = _re.sub(r'[ \t]+(?=\n)', '', text)
+    text = _re.sub(r'[ \t]+$', '', text, flags=_re.MULTILINE)
+    text = _re.sub(r'\n{3,}', '\n\n', text)
     return text
 
 
@@ -312,9 +406,13 @@ _MEETING_OK_PATTERN = re.compile(
 
 _MEETING_COMPILED = [re.compile(p, re.IGNORECASE) for p in _MEETING_ARRANGE_PATTERNS]
 
-# Phone presence detection (any common form of the company number)
+# Phone presence detection (any common form of the company number).
+# Catches +7 / 8 prefix, digits-only (7... and 8...), so the safety filter
+# never appends a duplicate phone redirect when the AI already wrote the
+# number in a non-canonical form (e.g. "8 913 448 37 17").
 _PHONE_PRESENCE_RE = re.compile(
-    r'\+7[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17|79134483717',
+    r'(?:\+7|8)[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17'
+    r'|79134483717|89134483717',
     re.IGNORECASE,
 )
 
@@ -643,8 +741,11 @@ class AIRouter:
             "Реагируй живо и эмоционально — 1-3 предложения. "
             "Будь полезной как дизайнер, но в первую очередь — живым человеком. "
             "Можешь поддержать чужой комментарий, добавить экспертное мнение "
-            "или добродушно пошутить. Если уместно — мягко предложи позвонить "
-            "+7 (913) 448-37-17 или зайти на abakanmebel.online. "
+            "или добродушно пошутить. "
+            "Пиши грамотным русским — согласуй падежи и окончания, без английских вставок. "
+            "Контакты (телефон/сайт) давай РЕДКО — только если клиент прямо спросил или "
+            "тема явно о заказе. В коротком комментарии НЕ повторяй контакты дважды и не "
+            "оборачивай их в кавычки/скобки. "
             "НИКОГДА не договаривайся о встрече, замере или записи — всегда "
             "направляй на звонок +7 (913) 448-37-17."
         )
@@ -685,17 +786,16 @@ class AIRouter:
         if route_type == ROUTE_CHAT:
             prompt += (
                 f"\n\nСейчас {time_ctx}. Ты общаешься с клиентом в личном чате. "
-                "В ПЕРВОМ ответе ВСЕГДА давай контакты организации: "
+                "В ПЕРВОМ ответе новому собеседнику дай контакты ОДИН раз: "
                 "\"Звоните +7 (913) 448-37-17, WhatsApp wa.me/79134483717, "
                 "или на сайте abakanmebel.online\". "
                 "Дальше общайся СВОБОДНО на любые темы — ты живой человек. "
                 "Будь как подруга-дизайнер — доверительно, с интересом. "
                 "Понимай контекст: помни что обсуждали, продолжай естественно. "
-                "СТИМУЛИРУЙ заказ: мягко предлагай ПОЗВОНИТЬ +7 (913) 448-37-17, "
-                "зайти на abakanmebel.online или написать в WhatsApp. "
-                "Фразы: \"Позвоните — подберём идеальный вариант!\", "
-                "\"Позвоните +7 (913) 448-37-17, чтобы записаться на бесплатный замер\", "
-                "\"На сайте ответим за 15 минут\". "
+                "НЕ повторяй телефон и сайт в каждом сообщении — дай один раз, "
+                "дальше мягко предлагай позвонить/зайти на сайт только когда это к месту. "
+                "Пиши грамотным, живым русским языком — без канцелярита, без английских "
+                "вставок, согласуй падежи и окончания. "
                 "КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: договариваться о встрече, замере или записи самой. "
                 "Не пиши \"запишу вас\", \"давайте запишемся\", \"встретимся\", \"я приеду\", "
                 "\"приезжайте к нам\", не назначай дату/время встречи. "
@@ -730,6 +830,8 @@ class AIRouter:
         text = re.sub(r'\*(.+?)\*', r'\1', text)
         # Remove markdown links
         text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1', text)
+        # Remove citation markers injected by perplexity-* models: [1] [2] [12]
+        text = re.sub(r'\s*\[\d{1,3}\]', '', text)
         # Remove code blocks
         text = re.sub(r'```[\s\S]*?```', '', text)
         text = re.sub(r'`(.+?)`', r'\1', text)
@@ -748,6 +850,13 @@ class AIRouter:
         # SAFETY NET: if Dasha still tries to arrange a meeting/measurement,
         # ensure the phone number is present so the client can call.
         text = _enforce_no_meetings(text)
+        # Dedupe: keep only the first phone / site / WhatsApp / channel link —
+        # prevents "дубли" when the AI repeats contacts in one response.
+        text = _dedupe_contacts(text)
+        # Strip orphan wrapping guillemets/brackets left at the very start/end
+        # after the AI's «...» wrapping was partially removed around a link.
+        text = re.sub(r'^\s*[«“"\'\(\[]+', '', text)
+        text = re.sub(r'[»”"\'\)\]]+\s*$', '', text)
         return text.strip()
 
     def get_status(self) -> Dict:

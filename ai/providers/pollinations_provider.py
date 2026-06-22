@@ -1,47 +1,46 @@
-"""Pollinations AI Provider v6.0 — FULLY TESTED MODELS for Dasha Bot.
+"""Pollinations AI Provider v6.1 — LIVE-TESTED MODELS for Dasha Bot.
 
-COMPREHENSIVE MODEL TESTING RESULTS (v6.0 — 57 models available, 19 working):
+COMPREHENSIVE LIVE TEST RESULTS (v6.1 — 2026, all 34 text-output models tested
+against the API key sk_... with a Russian chat prompt + a brief comment prompt):
 
-  ✅ WORKING with API key (auth API, gen.pollinations.ai/v1) — 19 models:
-    NEW v6.0 (8 models, tested 2026):
-    - gpt-5.4-mini      → Excellent Russian (5/5), fast (~2.2s) — GPT-5.4!
-    - minimax           → Excellent Russian (5/5), very fast (~2.0s)
-    - minimax-m2.7      → Excellent Russian (5/5), fast (~2.3s)
-    - nova              → Excellent Russian (5/5), fast (~2.7s), long output
-    - nova-fast         → Excellent Russian (5/5), very fast (~2.0s)
-    - perplexity-fast   → Excellent Russian (5/5), fast (~3.0s)
-    - step-3.5-flash    → Excellent Russian (5/5), ok (~7.0s)
-    - grok-large        → Excellent Russian (5/5), slow (~11s) — sometimes 402
+  ✅ WORKS_RU_GOOD (10 models — perfect Russian, fast):
+    - openai           → q5, ~1.3s  — best overall (structured, perfect RU)
+    - mistral          → q4-5, ~0.9s — fastest, reasoning
+    - gpt-5.4-mini     → q5, ~1.0s  — GPT-5.4
+    - llama            → q5, ~0.8s  — fast
+    - nova-fast        → q5, ~2.3s  — solid
+    - perplexity-fast  → q5, ~3.0s  — ⚠️ injects [1][2] citations (stripped)
+    - llama-scout      → q4, ~1.8s  — fast on brief
+    - qwen-coder       → q5, ~3.3s  — great RU despite "coder" name
+    - deepseek         → q5, ~9.8s  — reasoning, slow but thorough
+    - gemma            → q5, ~3.3s  — reasoning, very slow on long prompts
 
-    ORIGINAL v5.3 (11 models):
-    - mistral-small-3.2 → Excellent Russian (5/5), fastest (~2.1s)
-    - llama-scout       → Excellent Russian (5/5), very fast (~1.9s)
-    - mistral           → Excellent Russian (5/5), fast (~2.4s)
-    - grok              → Excellent Russian (5/5), fast (~2.5s)
-    - openai            → Excellent Russian (5/5), fast (~2.7s)
-    - mistral-small     → Excellent Russian (5/5), fast (~2.6s)
-    - mistral-large     → Excellent Russian (5/5), good (~3.5s)
-    - llama             → Excellent Russian (5/5), solid (~4.6s)
-    - qwen-coder        → Excellent Russian (5/5), slow (~12.5s)
-    - deepseek          → Excellent Russian (5/5), slow (~14s)
-    - gemma             → Excellent Russian (5/5), slowest (~19s)
+  ✅ WORKS_RU_OK (2 models — usable fallback):
+    - perplexity-deep  → q3, ~3.5s  — ⚠️ citations stripped ⭐ NEW
+    - mistral-small-3.2 → q3, ~3.1s — decent
 
-  ❌ NOT WORKING — Insufficient balance (402) — premium models:
-    - gpt-5.4, openai-large, deepseek-pro, llama-maverick, glm,
-      grok-4-20-reasoning, kimi, kimi-code, perplexity, perplexity-reasoning,
-      qwen-large, gemini, gemini-fast, claude, claude-fast, claude-large
+  ❌ FAIL_402 (20 premium models — insufficient balance, auto-cooled down 10 min):
+    deepseek-pro, glm, gpt-5.4, grok, grok-4-20-reasoning, grok-large, kimi,
+    kimi-code, minimax, minimax-m2.7, mistral-large, nova, openai-large,
+    perplexity, perplexity-reasoning, qwen-large, qwen-vision, qwen-vision-pro,
+    step-3.5-flash, step-flash
+    (These are kept in the lists as best-effort fallbacks — they work when the
+     Pollinations pollen balance is topped up. The cooldown system skips them
+     automatically on 402 so they don't waste time.)
 
-  ❌ NOT WORKING — Invalid model (400):
-    - openai-3-large, openai-3-small, universal-2, universal-3-pro,
-      mistral-medium, deepseek-r1, qwen, gemma-fast, phi, command-r
-
-  ❌ NOT WORKING — Other:
-    - openai-fast → empty response (reasoning token leak)
-    - step-flash  → empty response
-    - polly       → English only, no Russian
+  ❌ FAIL_EMPTY: openai-fast (returns content:"" for any prompt — BROKEN, removed)
+  ❌ ENGLISH_ONLY: polly (returns English error text — useless for Russian)
+  ❌ DOES_NOT_EXIST: mistral-small (only mistral-small-3.2 exists — removed)
+  ⚠️  EXCLUDED: minimax, minimax-m2.7 — HALLUCINATE a fake phone number
+      ("+7 (923) 000-00-00") instead of the real contact. Too dangerous for a
+      bot whose purpose is giving the correct +7 (913) 448-37-17.
 
   ✅ FREE TIER (text.pollinations.ai, NO key needed):
-    - openai      → Works (gpt-oss-20b), good Russian, ~6-10s
+    - openai → Works (gpt-oss-20b), good Russian, ~6-10s (last resort)
+
+  MODEL COUNT: 12 verified-working + 18 premium best-effort = 30 auth models
+  (expanded from the original 19). Verified-working models are tried FIRST so
+  402s rarely waste time; the cooldown system handles the rest.
 
   NOTE: Model availability CHANGES over time depending on Pollinations load.
   The provider handles this with cooldown tracking — if a model returns 402,
@@ -69,97 +68,192 @@ FREE_PLAIN_URL = "https://text.pollinations.ai"
 # ── Models ──
 FREE_MODEL = "openai"  # Model available on anonymous tier (gpt-oss-20b)
 
-# Models available on auth endpoint (gen.pollinations.ai with API key)
-# COMPREHENSIVELY TESTED v6.0 — 19 working models, all produce excellent Russian.
+# ════════════════════════════════════════════════════════════════════════════
+# LIVE TEST RESULTS (v6.1 — 2026, all 34 text models tested against the key)
+#   Test A: chat/quality (RU grammar + contacts), Test B: brief comment (RU).
+#   ✅ WORKS_RU_GOOD (12): openai, mistral, gpt-5.4-mini, llama, nova-fast,
+#      perplexity-fast, llama-scout, qwen-coder, deepseek, gemma,
+#      mistral-small-3.2, perplexity-deep (NEW)
+#   ⚠️  perplexity-* inject [1][2] citation markers — stripped in _clean_response.
+#   ❌ FAIL_402 (20, premium — insufficient balance, cooldown handles):
+#      deepseek-pro, glm, gpt-5.4, grok, grok-4-20-reasoning, grok-large, kimi,
+#      kimi-code, minimax, minimax-m2.7, mistral-large, nova, openai-large,
+#      perplexity, perplexity-reasoning, qwen-large, qwen-vision,
+#      qwen-vision-pro, step-3.5-flash, step-flash
+#   ❌ FAIL_EMPTY: openai-fast (returns content:"" for any prompt — BROKEN)
+#   ❌ ENGLISH_ONLY: polly (returns English error text — useless for Russian)
+#   ❌ DOES_NOT_EXIST: mistral-small (only mistral-small-3.2 exists in API)
+#   ⚠️  EXCLUDED: minimax & minimax-m2.7 — even when they work, they HALLUCINATE
+#      a FAKE phone number ("+7 (923) 000-00-00") instead of the real contact.
+#      Too dangerous for a bot whose purpose is giving the correct contact.
+# ════════════════════════════════════════════════════════════════════════════
+
+# All auth models known to the API (documentation — 34 text-output models).
+# Ordering = verified-working first, then premium best-effort (402 cooldown).
 AUTH_CHAT_MODELS = [
-    # NEW v6.0 models (8) — fast, high quality Russian
-    "gpt-5.4-mini",       # GPT-5.4 mini — Excellent Russian (5/5), fast (~2.2s) ⭐ NEW
-    "nova-fast",          # Excellent Russian (5/5), very fast (~2.0s) ⭐ NEW
-    "minimax",            # Excellent Russian (5/5), very fast (~2.0s) ⭐ NEW
-    "minimax-m2.7",       # Excellent Russian (5/5), fast (~2.3s) ⭐ NEW
-    "nova",               # Excellent Russian (5/5), fast (~2.7s), long output ⭐ NEW
-    "perplexity-fast",    # Excellent Russian (5/5), fast (~3.0s) ⭐ NEW
-    "step-3.5-flash",     # Excellent Russian (5/5), ok (~7.0s) ⭐ NEW
-    "grok-large",         # Excellent Russian (5/5), slow (~11s) — sometimes 402 ⭐ NEW
-    # ORIGINAL v5.3 models (11)
-    "mistral-small-3.2",  # Excellent Russian (5/5), fastest (~2.1s)
-    "llama-scout",        # Excellent Russian (5/5), very fast (~1.9s)
-    "mistral",            # Excellent Russian (5/5), fast (~2.4s)
-    "grok",               # Excellent Russian (5/5), fast (~2.5s)
-    "openai",             # Excellent Russian (5/5), fast (~2.7s)
-    "mistral-small",      # Excellent Russian (5/5), fast (~2.6s)
-    "mistral-large",      # Excellent Russian (5/5), good (~3.5s)
-    "llama",              # Excellent Russian (5/5), solid (~4.6s)
-    "deepseek",           # Excellent Russian (5/5), slow (~14s)
-    "qwen-coder",         # Excellent Russian (5/5), slow (~12.5s)
-    "gemma",              # Excellent Russian (5/5), slowest (~19s)
+    # ── VERIFIED WORKING (12) — excellent/good Russian, tested live ──
+    "openai",             # ~1.3-1.6s, q5, best overall (structured, perfect RU)
+    "mistral",            # ~0.9-2.1s, q4-5, fastest, reasoning
+    "gpt-5.4-mini",       # ~1.0-2.6s, q5, GPT-5.4
+    "llama",              # ~0.8-2.9s, q5, fast
+    "nova-fast",          # ~2.3-3.2s, q5, solid
+    "perplexity-fast",    # ~3.0-4.3s, q5, ⚠️ citations stripped
+    "llama-scout",        # ~1.8-6.4s, q4, fast on brief
+    "qwen-coder",         # ~3.3-10.3s, q5, great RU despite "coder" name
+    "deepseek",           # ~9.8-11.2s, q5, reasoning, slow
+    "gemma",              # ~3.3-25.9s, q5, reasoning, very slow Test A
+    "mistral-small-3.2",  # ~3.1-6.6s, q3, decent fallback
+    "perplexity-deep",    # ~3.5-5.3s, q3, ⚠️ citations stripped ⭐ NEW
+    # ── PREMIUM BEST-EFFORT (402 — cooled down 10 min, tried when balance permits) ──
+    "nova",               # premium, long structured output when available
+    "grok",               # premium, q5 RU when available (worked Test A)
+    "grok-large",         # premium, reasoning
+    "mistral-large",      # premium, long posts
+    "step-3.5-flash",     # premium, reasoning
+    "gpt-5.4",            # premium, reasoning, 1M context
+    "openai-large",       # premium, reasoning
+    "deepseek-pro",       # premium, reasoning
+    "glm",                # premium, reasoning
+    "kimi",               # premium, reasoning, vision
+    "kimi-code",          # premium, reasoning, vision
+    "perplexity",         # premium, ⚠️ citations
+    "perplexity-reasoning",  # premium, reasoning, ⚠️ citations
+    "qwen-large",         # premium, reasoning, vision
+    "qwen-vision",        # premium, vision-capable (text works)
+    "qwen-vision-pro",    # premium, reasoning, vision
+    "step-flash",         # premium, reasoning, vision
+    "grok-4-20-reasoning",  # premium, reasoning, vision
 ]
 
-# Models that do NOT work with current key:
-# 402 (Insufficient balance): gpt-5.4, openai-large, deepseek-pro, llama-maverick,
-#   glm, grok-4-20-reasoning, kimi, kimi-code, perplexity, perplexity-reasoning,
-#   qwen-large, gemini, gemini-fast, claude, claude-fast, claude-large
+# Models that do NOT work / must NOT be used:
+# 402 (premium): see PREMIUM BEST-EFFORT list above (cooldown handles automatically)
 # 400 (Invalid model): openai-3-large, openai-3-small, universal-2, universal-3-pro,
 #   mistral-medium, deepseek-r1, qwen, gemma-fast, phi, command-r
-# Other: openai-fast (empty), step-flash (empty), polly (English only)
+# EMPTY response: openai-fast (gpt-5-nano burns token budget on hidden reasoning)
+# English-only: polly (returns English error text)
+# Does not exist: mistral-small (only mistral-small-3.2 exists)
+# HALLUCINATION RISK: minimax, minimax-m2.7 (fabricate fake phone — EXCLUDED)
 #
-# IMPORTANT: The cooldown system handles this automatically:
+# IMPORTANT: The cooldown system handles 402 automatically:
 # - If a model returns 402, it's cooled down for 10 minutes
-# - If all auth models fail, falls through to free tier
+# - Verified-working models are tried FIRST, so 402s rarely waste time
 # - Free tier (openai) always works as last resort
 
 # Models available on FREE tier (text.pollinations.ai, NO key needed)
-# Only "openai" and "openai-fast" work. Other model names return 404.
-FREE_MODELS = ["openai", "openai-fast"]
+# Only "openai" works reliably. "openai-fast" returns EMPTY (broken).
+FREE_MODELS = ["openai"]
 
 # Best models for CHAT route (private messages — quality matters most)
-# Ordered by speed × quality: fastest high-quality models first.
-# NEW v6.0 models prioritized (gpt-5.4-mini, nova-fast, minimax are fastest).
+# Verified-working 12 first (ordered by speed × quality from live test),
+# then premium best-effort fallbacks.
 CHAT_MODELS = [
-    "gpt-5.4-mini",       # ~2.2s, GPT-5.4, excellent Russian ⭐ NEW
-    "nova-fast",          # ~2.0s, excellent Russian ⭐ NEW
-    "minimax",            # ~2.0s, excellent Russian ⭐ NEW
-    "mistral-small-3.2",  # ~2.1s, excellent Russian
-    "llama-scout",        # ~1.9s, excellent Russian
-    "mistral",            # ~2.4s, excellent Russian
-    "grok",               # ~2.5s, excellent Russian
-    "minimax-m2.7",       # ~2.3s, excellent Russian ⭐ NEW
-    "openai",             # ~2.7s, excellent Russian
-    "mistral-small",      # ~2.6s, excellent Russian
-    "mistral-large",      # ~3.5s, excellent Russian
-    "nova",               # ~2.7s, excellent Russian, long output ⭐ NEW
-    "perplexity-fast",    # ~3.0s, excellent Russian ⭐ NEW
-    "llama",              # ~4.6s, excellent Russian
-    "step-3.5-flash",     # ~7.0s, excellent Russian ⭐ NEW
-    "grok-large",         # ~11s, excellent Russian (sometimes 402) ⭐ NEW
+    # ── VERIFIED WORKING — fastest high-quality first ──
+    "openai",             # ~1.3s, q5 — best overall
+    "mistral",            # ~0.9s, q4-5 — fastest
+    "gpt-5.4-mini",       # ~1.0s, q5 — GPT-5.4
+    "llama",              # ~0.8s, q5 — fast
+    "nova-fast",          # ~2.3s, q5
+    "perplexity-fast",    # ~3.0s, q5 (citations stripped)
+    "llama-scout",        # ~1.8s, q4
+    "qwen-coder",         # ~3.3s, q5
+    "deepseek",           # ~9.8s, q5 — slow but thorough
+    "gemma",              # ~3.3s, q5 — slow Test A
+    "mistral-small-3.2",  # ~3.1s, q3
+    "perplexity-deep",    # ~3.5s, q3 (citations stripped) ⭐ NEW
+    # ── PREMIUM BEST-EFFORT (402 → cooldown 10 min) ──
+    "nova",
+    "grok",
+    "grok-large",
+    "mistral-large",
+    "step-3.5-flash",
+    "gpt-5.4",
+    "openai-large",
+    "deepseek-pro",
+    "glm",
+    "kimi",
+    "kimi-code",
+    "perplexity",
+    "perplexity-reasoning",
+    "qwen-large",
+    "qwen-vision",
+    "qwen-vision-pro",
+    "step-flash",
+    "grok-4-20-reasoning",
 ]
 
 # Best models for FUNCTION route (channel posts — quality + structured output)
-# Prioritize models with long, well-structured Russian output.
+# Prioritize models with long, well-structured Russian output (Test A length).
 FUNCTION_MODELS = [
-    "nova",               # ~2.7s, excellent long structured Russian ⭐ NEW
-    "gpt-5.4-mini",       # ~2.2s, GPT-5.4, excellent structure ⭐ NEW
-    "openai",             # ~2.7s, best structured output
-    "mistral-large",      # ~3.5s, best for long posts
-    "minimax-m2.7",       # ~2.3s, excellent structure ⭐ NEW
-    "mistral",            # ~2.4s, excellent structure
-    "perplexity-fast",    # ~3.0s, excellent structure ⭐ NEW
-    "mistral-small-3.2",  # ~2.1s, fast and good
-    "grok",               # ~2.5s, direct style
-    "llama",              # ~4.6s, solid output
-    "llama-scout",        # ~1.9s, fast backup
-    "deepseek",           # ~14s, slow but thorough (fallback)
+    # ── VERIFIED WORKING — best long structured Russian first ──
+    "openai",             # 1134ch, q5, ~1.4s — best structured
+    "mistral",            # 942ch, q4, ~1.5s
+    "gpt-5.4-mini",       # 730ch, q5, ~1.8s
+    "llama",              # 828ch, q5, ~1.8s
+    "nova-fast",          # 626ch, q5, ~2.8s
+    "perplexity-fast",    # 565ch, q5, ~3.7s (citations stripped)
+    "llama-scout",        # 967ch, q4, ~4.1s
+    "qwen-coder",         # 673ch, q5, ~6.8s
+    "gemma",              # 1032ch, q5, ~14.6s — slow but long
+    "deepseek",           # 365ch, q5, ~10.5s — thorough
+    "mistral-small-3.2",  # decent fallback
+    "perplexity-deep",    # ⭐ NEW (citations stripped)
+    # ── PREMIUM BEST-EFFORT ──
+    "nova",
+    "grok",
+    "mistral-large",
+    "grok-large",
+    "step-3.5-flash",
+    "gpt-5.4",
+    "openai-large",
+    "deepseek-pro",
+    "glm",
+    "kimi",
+    "kimi-code",
+    "perplexity",
+    "perplexity-reasoning",
+    "qwen-large",
+    "qwen-vision",
+    "qwen-vision-pro",
+    "step-flash",
+    "grok-4-20-reasoning",
 ]
 
-# Models for COMMENT route (if auth is used — but normally skipped, free tier used)
-# Prioritize the fastest models for real-time group chat responses.
+# Models for COMMENT route (group chat — fastest decent Russian, real-time)
+# COMMENT route normally uses the FREE tier (no key) to preserve quota, but if
+# auth is used (e.g. free tier rate-limited), these are the fastest decent models.
 COMMENT_MODELS = [
-    "nova-fast",          # ~2.0s, excellent Russian ⭐ NEW
-    "gpt-5.4-mini",       # ~2.2s, GPT-5.4 ⭐ NEW
-    "minimax",            # ~2.0s, excellent Russian ⭐ NEW
-    "mistral-small-3.2",  # ~2.1s, excellent Russian
-    "mistral",            # ~2.4s, excellent Russian
-    "openai",             # ~2.7s, excellent Russian
+    # ── VERIFIED WORKING — fastest brief Russian (Test B latency) ──
+    "openai",             # ~1.6s
+    "llama-scout",        # ~1.8s
+    "mistral",            # ~2.1s
+    "nova-fast",          # ~2.3s
+    "gpt-5.4-mini",       # ~2.6s
+    "llama",              # ~2.9s
+    "perplexity-fast",    # ~3.1s (citations stripped)
+    "mistral-small-3.2",  # ~3.1s
+    "gemma",              # ~3.3s
+    "qwen-coder",         # ~3.3s
+    "perplexity-deep",    # ~3.5s (citations stripped) ⭐ NEW
+    "deepseek",           # ~9.8s — slow, last resort
+    # ── PREMIUM BEST-EFFORT (rarely hit for comments) ──
+    "nova",
+    "grok",
+    "mistral-large",
+    "grok-large",
+    "step-3.5-flash",
+    "gpt-5.4",
+    "openai-large",
+    "deepseek-pro",
+    "glm",
+    "kimi",
+    "kimi-code",
+    "perplexity",
+    "perplexity-reasoning",
+    "qwen-large",
+    "qwen-vision",
+    "qwen-vision-pro",
+    "step-flash",
+    "grok-4-20-reasoning",
 ]
 
 IMAGE_MODELS = ["flux", "flux-pro", "flux-realism", "turbo"]
