@@ -1,4 +1,4 @@
-"""Provider Manager v5.3 — MULTI-PROVIDER FALLBACK for Dasha Bot.
+"""Provider Manager v7.0 — MULTI-PROVIDER FALLBACK for Dasha Bot.
 
 COMPLETE FALLBACK CHAIN (tested & integrated):
   1. LOCAL:        RuadaptQwen3-4B (primary, no internet needed) — CHAT/FUNCTION only
@@ -8,12 +8,16 @@ COMPLETE FALLBACK CHAIN (tested & integrated):
   5. GEMINI:       Google Gemini free (free, Gemini-2.0-Flash)
   6. OPENROUTER:   OpenRouter free models (free, 20+ models)
   7. CEREBRAS:     Cerebras free tier (free, ultra-fast Llama-3.3-70B)
-  8. POLLINATIONS: Pollinations (with API key for CHAT/FUNCTION, free for COMMENT)
+  8. POLLINATIONS: Pollinations v7.0 (33 auth models: 7 always + 5 balance + 8 premium-sometimes + 13 premium-402)
 
 NOTE: Local model is BYPASSED for COMMENT route (group messages) because it
 takes ~85s per response — too slow for real-time chat. See LOCAL_FOR_COMMENTS.
 
-NOTE: Pollinations auth (with API key) is only used for CHAT and FUNCTION routes.
+NOTE: Pollinations v7.0 — 33 auth models tiered by availability:
+  - 7 ALWAYS working (openai, mistral, gemma, nova-fast, llama-scout, qwen-coder, mistral-small-3.2)
+  - 5 BALANCE-DEPENDENT (gpt-5.4-mini, llama, perplexity-fast, deepseek, perplexity-deep)
+  - 8 PREMIUM-SOMETIMES (grok, grok-large, mistral-large, nova, qwen-vision, qwen-vision-pro, step-3.5-flash, step-flash)
+  - 13 PREMIUM-ALWAYS-402 (kept as best-effort fallbacks)
 For COMMENT route, Pollinations skips auth and uses the free anonymous tier.
 This preserves the API key quota for high-quality responses in private chats
 and channel posts where quality matters most.

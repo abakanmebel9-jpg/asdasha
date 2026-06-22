@@ -1,13 +1,9 @@
-"""AI Router v5.3 — MULTI-PROVIDER FALLBACK + HUMAN-LIKE personality (Dasha Bot).
+"""AI Router v7.0 — MULTI-PROVIDER FALLBACK + HUMAN-LIKE personality (Dasha Bot).
 
-v5.3 UPDATES:
-- Pollinations full 39-model sweep: 11 working models, all 5/5 Russian quality
-- New model: mistral-small (fast, excellent Russian)
-- Multi-image support in channel posts (send_media_group, up to 10 photos)
-- News image dedup: removes CDN multi-resolution variants
-- Pollinations auth (with API key) restricted to CHAT/FUNCTION routes only
-- COMMENT route uses Pollinations free tier only (preserves key quota)
-- Route-based model selection for Pollinations auth
+v7.0 UPDATES:
+- Pollinations v7.0: 33 auth models (7 always + 5 balance + 8 premium-sometimes + 13 premium-402)
+- 8 newly-available premium models now work when balance permits (grok, grok-large, etc)
+- Improved contact deduplication: better handling of duplicates and extra characters
 - All providers are OpenAI-compatible (except local llama-cpp)
 - Automatic provider discovery — only configured providers (with API keys) are used
 
@@ -19,7 +15,7 @@ FALLBACK CHAIN:
   5. GEMINI:     Gemini-2.0-Flash (free, excellent Russian)
   6. OPENROUTER: Llama-3.3-70B:free (free, many models)
   7. CEREBRAS:   Llama-3.3-70B (free, ultra-fast ~0.3s)
-  8. POLLINATIONS: 11 models (AUTH for CHAT/FUNCTION, FREE for COMMENT)
+  8. POLLINATIONS: 33 models (7 always + 5 balance + 8 premium-sometimes + 13 premium-402)
 
 ROUTE STRATEGY:
   CHAT     → Local → GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations (auth)
@@ -231,12 +227,14 @@ def _linkify_contacts(text: str) -> str:
     Called by _clean_response so ALL AI responses get clickable contacts.
     Telegram HTML parse_mode supports <a href="tel:..."> for tap-to-call.
 
-    Robust v6.1 — fixes "дубли и лишние символы вокруг ссылки":
+    Robust v7.0 — fixes "дубли и лишние символы вокруг ссылки":
       • Strips wrapping guillemets/quotes/parens around the phone & website
         BEFORE linkifying (so the link is not surrounded by «» or "").
       • Matches the company phone in +7 AND 8 prefix AND digits-only form,
         normalizing the href to tel:+79134483717.
       • Never double-wraps a phone that already sits inside an href attribute.
+      • Strips colon+space after labels like "Телефон:", "Тел:" before linkifying.
+      • Removes redundant "http(s)://" prefix if AI writes the full URL.
     """
     import html as _html
     import re as _re
@@ -265,6 +263,21 @@ def _linkify_contacts(text: str) -> str:
     text = _re.sub(
         r'([«“"\'\(\[])\s*((?:\+7|8)[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17)',
         r'\2', text,
+    )
+
+    # 2c. Strip colon+space after labels like "Телефон:", "Тел:", "Сайт:", "Звоните:"
+    #     before the phone/URL to avoid orphan labels after linkification.
+    text = _re.sub(
+        r'(?:Телефон|Тел|Тел\.|Сайт|Звоните|телефон|тел|сайт|звоните)\s*:\s*'
+        r'(?=(?:\+7|8)[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17|abakanmebel)',
+        '', text,
+    )
+
+    # 2d. Remove "http://" or "https://" prefix before abakanmebel.online
+    #     (AI sometimes writes the full URL instead of just the domain)
+    text = _re.sub(
+        r'https?://(abakanmebel\.online)',
+        r'\1', text,
     )
 
     # 3. Linkify wa.me/79134483717 FIRST (before the phone regex, so the digits
@@ -315,6 +328,9 @@ def _dedupe_contacts(text: str) -> str:
     Prevents "дубли" (duplicate phone/site/WhatsApp) in a single response when
     the AI, due to over-insistent prompts, emits the same contact twice.  Also
     tidies dangling conjunctions/punctuation left behind after removal.
+
+    v7.0 — Also deduplicates raw (non-linkified) forms of the phone number
+    and website, in case _linkify_contacts didn't catch them.
     """
     import re as _re
 
@@ -330,17 +346,24 @@ def _dedupe_contacts(text: str) -> str:
 
         text = _re.sub(pattern, _repl, text)
 
+    # Deduplicate linkified forms
     _keep_first(r'<a href="tel:\+79134483717">[^<]*</a>')
     _keep_first(r'<a href="https://abakanmebel\.online">abakanmebel\.online</a>')
     _keep_first(r'<a href="https://wa\.me/79134483717">[^<]*</a>')
     _keep_first(r'<a href="https://t\.me/abakan_mebel">@abakan_mebel</a>')
+
+    # Deduplicate raw (non-linkified) forms of the phone number
+    # (in case _linkify_contacts missed one due to unusual formatting)
+    _keep_first(r'(?:\+7|8)[\s()\-]*913[\s()\-]*448[\s\-]*37[\s\-]*17')
+    # Deduplicate raw wa.me links (non-linkified)
+    _keep_first(r'wa\.me/79134483717')
 
     # Tidy leftovers after duplicate removal:
     # - orphaned contact labels that lost their link ("Тел: ", "Телефон: ",
     #   "Звоните: ", "Сайт: ") at end of a line OR followed by a parenthetical
     #   / punctuation (e.g. "Тел: (для записи)." → "(для записи).")
     text = _re.sub(
-        r'[ \t]*(?:Тел(?:ефон|\.?)?|телефон|Звоните|звоните|Сайт|сайт|WhatsApp|Viber)\s*[:]?\s*(?=\n|$|\s*[().,])',
+        r'[ \t]*(?:Тел(?:ефон|\.?)?|телефон|Звоните|звоните|Сайт|сайт|WhatsApp|Viber|Телеграм|Telegram)\s*[:]?\s*(?=\n|$|\s*[().,])',
         '', text,
     )
     # - dangling conjunctions before punctuation / line end (" или.", " или,",
@@ -534,7 +557,7 @@ class AIRouter:
         available = [name for name, p in providers if p]
         pollinations_status = "auth+free" if config.POLLINATIONS_API_KEY else "free-only"
         logger.info(
-            f"AI Router v5.3 initialized — "
+            f"AI Router v7.0 initialized — "
             f"providers: {' → '.join(available)} "
             f"(Pollinations: {pollinations_status})"
         )

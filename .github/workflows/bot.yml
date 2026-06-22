@@ -1,20 +1,23 @@
-name: Dasha Bot — MULTI-PROVIDER v6.0 — Даша Дизайнер Мебели
+name: Dasha Bot — MULTI-PROVIDER v7.0 — Даша Дизайнер Мебели
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Dasha Bot v6.0 — MULTI-PROVIDER FALLBACK + 8 NEW Pollinations models
+# Dasha Bot v7.0 — MULTI-PROVIDER FALLBACK + 33 Pollinations models
 #
 #   FAILOVER CHAIN:
 #     Local (RuadaptQwen3-4B) → GitHub Models → HuggingFace →
 #     Groq → Gemini → OpenRouter → Cerebras → Pollinations
 #
 #   ROUTE STRATEGY:
-#     CHAT/FUNCTION: Local → GitHub → ... → Pollinations auth (19 models)
+#     CHAT/FUNCTION: Local → GitHub → ... → Pollinations auth (33 models)
 #     COMMENT: cloud-only → GitHub → ... → Pollinations free only (no local, no auth)
 #
 #   - LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (~2.5GB GGUF, CPU)
 #   - 7 CLOUD PROVIDERS: all free, OpenAI-compatible
-#   - Pollinations v6.0: 19 models tested — 8 NEW (gpt-5.4-mini, nova, nova-fast,
-#     minimax, minimax-m2.7, perplexity-fast, step-3.5-flash, grok-large)
+#   - Pollinations v7.0: 33 auth models tiered by availability:
+#     7 ALWAYS (openai, mistral, gemma, nova-fast, llama-scout, qwen-coder, mistral-small-3.2)
+#     5 BALANCE-DEPENDENT (gpt-5.4-mini, llama, perplexity-fast, deepseek, perplexity-deep)
+#     8 PREMIUM-SOMETIMES (grok, grok-large, mistral-large, nova, qwen-vision, qwen-vision-pro, step-3.5-flash, step-flash)
+#     13 PREMIUM-ALWAYS-402 (kept as best-effort fallbacks)
 #   - Multi-image support: send_media_group up to 10 photos per post
 #   - libopenblas-dev for fast CPU inference
 #   - FOOTER: Автор @asdasha_bot Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
@@ -27,7 +30,7 @@ name: Dasha Bot — MULTI-PROVIDER v6.0 — Даша Дизайнер Мебел
 #   PHONE              — +7 (913) 448-37-17
 #   HF_TOKEN           — HuggingFace token (for model download)
 #   GH_PAT_TOKEN       — GitHub PAT with models:read scope (for GitHub Models + self-dispatch)
-#   POLLINATIONS_API_KEY — enter.pollinations.ai (19 models with auth key)
+#   POLLINATIONS_API_KEY — enter.pollinations.ai (33 models with auth key)
 #
 # OPTIONAL SECRETS (free API keys for cloud providers):
 #   GROQ_API_KEY       — console.groq.com (free, ultra-fast Llama-3.3-70B)
@@ -269,11 +272,11 @@ jobs:
           MASHA_ENABLED: "true"
           MASHA_POST_TIMES: "10:00,18:00"
         run: |
-          echo "=== Starting Dasha Bot v6.0 — MULTI-PROVIDER FALLBACK + 8 NEW Pollinations models ==="
+          echo "=== Starting Dasha Bot v7.0 — MULTI-PROVIDER FALLBACK + 33 Pollinations models ==="
           echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY for chat/channel)"
           echo "CLOUD FALLBACK: GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations"
-          echo "POLLINATIONS v6.0: 19 auth models for CHAT/FUNCTION (8 NEW), Free API for COMMENT"
-          echo "NEW MODELS: gpt-5.4-mini, nova, nova-fast, minimax, minimax-m2.7, perplexity-fast, step-3.5-flash, grok-large"
+          echo "POLLINATIONS v7.0: 33 auth models (7 always + 5 balance + 8 premium-sometimes + 13 premium-402)"
+          echo "NEW MODELS: grok, grok-large, mistral-large, nova, qwen-vision, qwen-vision-pro, step-3.5-flash, step-flash"
           echo "MULTI-IMAGE: send_media_group support (up to 10 photos per post)"
           echo "GROUP COMMENTS: cloud-only (local bypassed for speed, ~18s vs ~85s)"
           echo "CHANNEL: @abakan_mebel (2 posts/hour, every 30 min)"
@@ -290,7 +293,7 @@ jobs:
           [ -n "$GEMINI_API_KEY" ] && echo "  ✅ Gemini (2.0-Flash)" || echo "  ⏭️  Gemini (no key)"
           [ -n "$OPENROUTER_API_KEY" ] && echo "  ✅ OpenRouter (20+ models)" || echo "  ⏭️  OpenRouter (no key)"
           [ -n "$CEREBRAS_API_KEY" ] && echo "  ✅ Cerebras (ultra-fast)" || echo "  ⏭️  Cerebras (no key)"
-          [ -n "$POLLINATIONS_API_KEY" ] && echo "  ✅ Pollinations (19 auth models: gpt-5.4-mini, nova, minimax...)" || echo "  ⏭️  Pollinations (free tier only, no key)"
+          [ -n "$POLLINATIONS_API_KEY" ] && echo "  ✅ Pollinations v7.0 (33 auth models: 7 always + 5 balance + 8 premium + 13 402)" || echo "  ⏭️  Pollinations (free tier only, no key)"
           echo ""
 
           RETRY=0

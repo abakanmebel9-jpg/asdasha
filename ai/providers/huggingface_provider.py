@@ -58,6 +58,7 @@ RUSSIAN_MODELS = [
     "meta-llama/Llama-3.1-8B-Instruct",    # Good Russian, fast
     "mistralai/Mistral-7B-Instruct-v0.3",  # Good Russian, fast
     "Qwen/Qwen2.5-14B-Instruct",           # Better Russian, slower
+    "Qwen/Qwen2.5-Coder-32B-Instruct",     # Good Russian despite "coder" (NEW 2026)
 ]
 
 DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct"

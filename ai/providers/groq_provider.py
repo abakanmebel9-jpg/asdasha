@@ -5,25 +5,20 @@ Groq free tier:
   Auth: Free API key from console.groq.com
   Compatible: OpenAI Chat Completions format
 
-Available FREE models (tested 2025):
+Available FREE models (2026):
   - llama-3.3-70b-versatile — Excellent Russian, 70B, VERY fast (~1-2s!)
   - llama-3.1-8b-instant — Good Russian, 8B, ULTRA fast (~0.5s)
   - llama3-70b-8192 — Good Russian, 70B
   - llama3-8b-8192 — OK Russian, 8B
   - mixtral-8x7b-32768 — Good Russian, 47B MoE
   - gemma2-9b-it — Good Russian, 9B
+  - qwen-qwq-32b — Good Russian, reasoning (NEW 2026)
 
 Rate Limits (free tier, 2026):
   - ~30 RPM (requests per minute)
   - ~6,000 tokens per minute
   - ~500,000 tokens per day
   - No credit card required
-
-How to get API key:
-  1. Go to console.groq.com
-  2. Sign up (free)
-  3. Go to API Keys → Create API Key
-  4. Copy key to GROQ_API_KEY in .env
 
 KEY ADVANTAGE: Groq is the FASTEST free LLM API — responses in 0.5-2 seconds!
 Perfect for real-time chat bots.

@@ -52,6 +52,8 @@ FREE_MODELS = [
     "google/gemma-2-9b-it:free",
     "qwen/qwen-2.5-7b-instruct:free",
     "google/gemma-2-2b-it:free",
+    "deepseek/deepseek-r1:free",          # Reasoning model (NEW 2026)
+    "qwen/qwen-2.5-coder-32b-instruct:free",  # Code but good RU (NEW 2026)
 ]
 
 DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
