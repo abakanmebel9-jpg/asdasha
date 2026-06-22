@@ -1,4 +1,4 @@
-"""Provider Manager v7.1 — MULTI-PROVIDER FALLBACK for Dasha Bot.
+"""Provider Manager v7.2 — MULTI-PROVIDER FALLBACK for Dasha Bot.
 
 COMPLETE FALLBACK CHAIN (tested & integrated):
   1. LOCAL:        RuadaptQwen3-4B (primary, no internet needed) — CHAT/FUNCTION only

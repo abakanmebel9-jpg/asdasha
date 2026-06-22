@@ -6,15 +6,13 @@ LLM7.io (api.llm7.io):
         Optional: free API key for higher rate limits (120 RPM vs 30 RPM)
   Compatible: OpenAI Chat Completions format (drop-in replacement)
 
-Available FREE models (2026, excellent for Russian):
+Available FREE models (2026, tested):
   - qwen3-235b       — BEST Russian quality (235B MoE), excellent grammar, contacts
-  - qwen3-30b-a3b    — Fast, good Russian (30B MoE, 3B active)
-  - deepseek-r1-0528 — Reasoning model, good Russian
-  - deepseek-v3-0324 — Good Russian, general purpose
-  - qwen3-32b        — Good Russian, 32B
-  - gemma-3-27b      — Good Russian, Google model
-  - llama-4-scout     — Good Russian, Meta model
-  - mistral-small-3.2 — Good Russian, fast
+  - devstral-small-2:24b — Code-focused, decent Russian, variable speed (fallback only)
+
+⚠️ Previously available models NOW UNAVAILABLE (removed from API):
+  qwen3-30b-a3b, deepseek-r1-0528, qwen3-32b, deepseek-v3-0324,
+  gemma-3-27b, llama-4-scout, mistral-small-3.2
 
 Rate Limits (free tier):
   - ~30 RPM without API key
@@ -52,16 +50,10 @@ LLM7_BASE_URL = "https://api.llm7.io/v1"
 CHAT_URL = f"{LLM7_BASE_URL}/chat/completions"
 
 # Models optimized for Russian (ranked by quality for Dasha bot)
-# qwen3-235b is the BEST free model for Russian — 235B MoE, GPT-4 class
+# v7.2: Only 2 models currently available (7 removed from API)
 RUSSIAN_MODELS = [
-    "qwen3-235b",            # BEST Russian (235B MoE), excellent grammar + contacts
-    "qwen3-30b-a3b",         # Fast, good Russian (30B MoE, 3B active)
-    "deepseek-r1-0528",      # Reasoning, good Russian
-    "qwen3-32b",             # Good Russian, 32B
-    "deepseek-v3-0324",      # Good Russian, general purpose
-    "gemma-3-27b",           # Good Russian, Google
-    "llama-4-scout",         # Good Russian, Meta
-    "mistral-small-3.2",     # Good Russian, fast
+    "qwen3-235b",                  # BEST Russian (235B MoE), excellent grammar + contacts
+    "devstral-small-2:24b",        # Code-focused, decent Russian, variable speed (fallback)
 ]
 
 # Models that must NOT be used (hallucinate fake phone numbers)

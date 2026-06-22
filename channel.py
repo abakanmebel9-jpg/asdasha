@@ -101,6 +101,63 @@ def _strip_footer(text: str) -> str:
     return text
 
 
+def _safe_truncate_html(text: str, max_len: int) -> str:
+    """Truncate HTML text to max_len characters WITHOUT breaking HTML tags.
+
+    This is critical for Telegram messages — cutting through an <a href="...">
+    tag would break the message and cause a Telegram API error.
+
+    Strategy:
+    1. If text fits within max_len, return as-is.
+    2. Find a safe truncation point that doesn't split an HTML tag.
+    3. Close any unclosed tags after truncation.
+    4. Append "…" ellipsis.
+    """
+    if len(text) <= max_len:
+        return text
+
+    # Reserve 4 chars for "…\n" suffix
+    target_len = max_len - 4
+    if target_len < 50:
+        target_len = 50
+
+    truncated = text[:target_len]
+
+    # Don't split inside an HTML tag — walk back to before the tag
+    # Check if we're inside a tag: look for "<" without matching ">"
+    last_open = truncated.rfind("<")
+    last_close = truncated.rfind(">")
+    if last_open > last_close:
+        # We're inside a tag — truncate before the tag starts
+        truncated = text[:last_open]
+
+    # Try to break at a word boundary (space, newline)
+    last_space = truncated.rfind(" ")
+    last_newline = truncated.rfind("\n")
+    break_point = max(last_space, last_newline)
+    if break_point > len(truncated) - 200:
+        truncated = truncated[:break_point]
+
+    # Close any unclosed HTML tags
+    # Find all opened tags and close them in reverse order
+    opened_tags = re.findall(r"<(a|b|i|s|u|code|pre|strong|em|span)\b", truncated)
+    closed_tags = re.findall(r"</(a|b|i|s|u|code|pre|strong|em|span)>", truncated)
+    # Tags that need closing = opened - closed
+    tags_to_close = []
+    for tag in reversed(opened_tags):
+        if tag in closed_tags:
+            closed_tags.remove(tag)
+        else:
+            tags_to_close.append(tag)
+
+    # Append closing tags
+    for tag in tags_to_close:
+        truncated += f"</{tag}>"
+
+    truncated += "…"
+    return truncated
+
+
 def _strip_body_contacts(text: str) -> str:
     """Remove ANY existing contact info / footer from an AI-generated post body.
 
@@ -235,11 +292,10 @@ class ChannelManager:
             )
             body = _strip_footer(post_text)
             post_text = _build_post_with_footer(body, has_media=has_media)
-            # Absolute last resort — strip footer and hard-cut the body,
-            # then re-append footer. Never slice through HTML tags.
+            # Absolute last resort — use HTML-safe truncation
             if len(post_text) > final_limit:
                 body = _strip_footer(post_text)
-                body = body[: final_limit - len(_build_footer()) - 12] + "…"
+                body = _safe_truncate_html(body, final_limit - len(_build_footer()) - 12)
                 post_text = _build_post_with_footer(body, has_media=has_media)
 
         # Check if this post is too similar to recent posts
@@ -361,14 +417,19 @@ class ChannelManager:
         has_media = bool(image_urls)
         post_text = _build_post_with_footer(post_text, has_media=has_media)
 
-        # Final safety check
+        # Final safety check — use HTML-safe truncation
         final_limit = TELEGRAM_MEDIA_TEXT_LIMIT if has_media else TELEGRAM_TEXT_LIMIT
         if len(post_text) > final_limit:
             logger.warning(
                 f"AI post still too long after truncation: {len(post_text)} > {final_limit}, "
-                f"force truncating"
+                f"force truncating (HTML-safe)"
             )
-            post_text = post_text[:final_limit - 3] + "…"
+            # First try footer-aware re-truncation
+            body = _strip_footer(post_text)
+            post_text = _build_post_with_footer(body, has_media=has_media)
+            # If still too long, use HTML-safe truncation as last resort
+            if len(post_text) > final_limit:
+                post_text = _safe_truncate_html(post_text, final_limit)
 
         # Try to send with image(s) if provided
         sent = False

@@ -5,9 +5,14 @@ Cerebras free tier:
   Auth: Free API key from cloud.cerebras.ai
   Compatible: OpenAI Chat Completions format
 
-Available FREE models (2025):
-  - llama-3.3-70b — Excellent Russian, 70B, ULTRA fast (~0.3s!)
-  - llama3-8b — Good Russian, 8B, INSTANT (~0.2s!)
+Available FREE models (2026):
+  - gpt-oss-120b — Current primary model, excellent Russian (~0.3s!) ⭐ v7.2
+  - qwen-3.5-32b — Good Russian, reasoning ⭐ v7.2
+  - deepseek-r1-distill-llama-70b — Reasoning model, good Russian
+
+DEPRECATED models (DO NOT USE — removed from API):
+  - llama-3.3-70b — deprecated 2026-02-16 → migrate to gpt-oss-120b
+  - llama3-8b — deprecated 2026-05-27 → migrate to gpt-oss-120b
 
 Rate Limits (free tier):
   - ~10 RPM
@@ -40,13 +45,14 @@ logger = logging.getLogger("dasha.ai.cerebras")
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 CHAT_URL = f"{CEREBRAS_BASE_URL}/chat/completions"
 
-# Models
+# Models (v7.2 — llama models DEPRECATED, replaced with current models)
 RUSSIAN_MODELS = [
-    "llama-3.3-70b",  # Best quality Russian
-    "llama3-8b",       # Fastest
+    "gpt-oss-120b",                       # Current primary, excellent Russian (~0.3s!)
+    "qwen-3.5-32b",                       # Good Russian, reasoning
+    "deepseek-r1-distill-llama-70b",      # Reasoning model, good Russian
 ]
 
-DEFAULT_MODEL = "llama-3.3-70b"
+DEFAULT_MODEL = "gpt-oss-120b"
 
 
 class CerebrasProvider(BaseAIProvider):

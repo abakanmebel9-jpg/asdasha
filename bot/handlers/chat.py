@@ -44,6 +44,57 @@ logger = logging.getLogger("dasha.handlers.chat")
 chat_router = Router()
 
 
+# ── Telegram message character limits ──────────────────────────────────────────
+TELEGRAM_MSG_LIMIT = 4096  # Maximum characters per Telegram message
+
+
+def _safe_truncate(text: str, max_len: int) -> str:
+    """Truncate HTML text to max_len characters WITHOUT breaking HTML tags.
+
+    Critical for Telegram messages — cutting through an <a href="...">
+    tag would break the message and cause a Telegram API error.
+    Also closes any unclosed HTML tags after truncation.
+    """
+    if len(text) <= max_len:
+        return text
+
+    # Reserve 4 chars for "…" suffix
+    target_len = max_len - 4
+    if target_len < 50:
+        target_len = 50
+
+    truncated = text[:target_len]
+
+    # Don't split inside an HTML tag
+    last_open = truncated.rfind("<")
+    last_close = truncated.rfind(">")
+    if last_open > last_close:
+        truncated = text[:last_open]
+
+    # Try to break at a word boundary
+    last_space = truncated.rfind(" ")
+    last_newline = truncated.rfind("\n")
+    break_point = max(last_space, last_newline)
+    if break_point > len(truncated) - 200:
+        truncated = truncated[:break_point]
+
+    # Close any unclosed HTML tags (Telegram supports: b, i, u, s, a, code, pre)
+    opened_tags = re.findall(r"<(a|b|i|s|u|code|pre|strong|em|span)\b", truncated)
+    closed_tags = re.findall(r"</(a|b|i|s|u|code|pre|strong|em|span)>", truncated)
+    tags_to_close = []
+    for tag in reversed(opened_tags):
+        if tag in closed_tags:
+            closed_tags.remove(tag)
+        else:
+            tags_to_close.append(tag)
+
+    for tag in tags_to_close:
+        truncated += f"</{tag}>"
+
+    truncated += "…"
+    return truncated
+
+
 # ── Rate limiting ──────────────────────────────────────────────────────────────
 
 _user_last_message: dict = {}
@@ -586,10 +637,10 @@ async def handle_text_message(message: Message):
     if response.ok and response.text:
         reply = response.text.strip()
         dedup_store(message.from_user.id, text, reply)
-        # Truncate if too long for this chat type
+        # Truncate if too long for this chat type (HTML-safe)
         if len(reply) > max_chars:
-            reply = reply[:max_chars - 3] + "…"
-            logger.info(f"Truncated response to {max_chars} chars for {chat_type}")
+            reply = _safe_truncate(reply, max_chars)
+            logger.info(f"Truncated response to {len(reply)} chars for {chat_type}")
         await message.answer(reply)
         # Отметить, что Даша ответила в этом чате (для per-chat cooldown)
         if chat_type in ("group", "supergroup"):
@@ -666,7 +717,7 @@ async def handle_photo(message: Message):
 
     if response.ok and response.text:
         max_chars = adaptive_max_chars(chat_type) if chat_type != "private" else 4000
-        reply = response.text.strip()[:max_chars]
+        reply = _safe_truncate(response.text.strip(), max_chars)
         await message.answer(reply)
         if chat_type in ("group", "supergroup"):
             _mark_chat_responded(message.chat.id)
@@ -732,7 +783,7 @@ async def handle_media(message: Message):
             route_type="comment",
         )
         if response.ok and response.text:
-            await message.answer(response.text.strip()[:adaptive_max_chars(chat_type)])
+            await message.answer(_safe_truncate(response.text.strip(), adaptive_max_chars(chat_type)))
             _mark_chat_responded(message.chat.id)
         await _try_add_reaction(message)
     else:
