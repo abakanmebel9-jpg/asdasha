@@ -337,9 +337,10 @@ def _dedupe_contacts(text: str) -> str:
 
     # Tidy leftovers after duplicate removal:
     # - orphaned contact labels that lost their link ("Тел: ", "Телефон: ",
-    #   "Звоните: ") at end of a line
+    #   "Звоните: ", "Сайт: ") at end of a line OR followed by a parenthetical
+    #   / punctuation (e.g. "Тел: (для записи)." → "(для записи).")
     text = _re.sub(
-        r'[ \t]*(?:Тел(?:ефон|\.?)?|телефон|Звоните|звоните)\s*[:]?\s*(?=\n|$)',
+        r'[ \t]*(?:Тел(?:ефон|\.?)?|телефон|Звоните|звоните|Сайт|сайт|WhatsApp|Viber)\s*[:]?\s*(?=\n|$|\s*[().,])',
         '', text,
     )
     # - dangling conjunctions before punctuation / line end (" или.", " или,",
