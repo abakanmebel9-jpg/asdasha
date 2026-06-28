@@ -122,6 +122,63 @@ async def fetch_news_json() -> Optional[List[Dict]]:
     return all_items
 
 
+# Расширения/признаки, которые НЕ являются фото и не подходят для send_photo /
+# send_media_group (Telegram принимает только jpg/jpeg/png/webp как фото).
+# GIF → анимация, SVG → не растр, data: URI — не URL.
+_NON_PHOTO_URL_MARKERS = (
+    ".svg", ".gif", ".webm", ".mp4", ".mov", ".avi", ".pdf", ".html",
+    ".htm", ".php", ".aspx",
+)
+
+
+def _is_likely_photo_url(url: str) -> bool:
+    """Грубая фильтрация: оставить только URL, похожие на фото.
+
+    Пропускает URL без расширения (CDN часто отдаёт jpg без .jpg в пути —
+    реальный тип проверим по content-type при скачивании в channel.py).
+    """
+    if not url:
+        return False
+    low = url.lower().split('?')[0].split('#')[0]
+    if low.startswith("data:"):
+        return False
+    if low.startswith("blob:"):
+        return False
+    # Явно не-фото расширения — отбрасываем
+    for marker in _NON_PHOTO_URL_MARKERS:
+        if low.endswith(marker):
+            return False
+    return True
+
+
+def _canonical_image_key(url: str) -> str:
+    """Канонический ключ для дедупликации фото.
+
+    Нормализация:
+      - схема http/https приводится к общей (https)
+      - www. отбрасывается
+      - query-string отбрасывается
+      - CDN size-суффиксы (-1280-80.png, -1920-80.jpg) отбрасываются
+      - trailing slash отбрасывается
+      - всё в нижнем регистре
+
+    Это устраняет дубликаты одного изображения, отличающиеся схемой
+    (http://i.archi.ru/...jpg vs https://i.archi.ru/...jpg) или разрешением.
+    """
+    base = url.split('?')[0].split('#')[0]
+    # Нормализуем схему
+    if base.startswith("https://"):
+        base = "https://" + base[len("https://"):]
+    elif base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    # Убираем www.
+    base = re.sub(r'^https://www\.', 'https://', base)
+    # Убираем CDN size-суффиксы: -1280-80.png, -1920-80.jpg и т.п.
+    base = re.sub(r'-\d+-\d+(?=\.\w+$)', '', base)
+    # Нижний регистр + убираем trailing slash
+    return base.lower().rstrip('/')
+
+
 def _normalize_news_item(item: Dict) -> Optional[Dict]:
     title = item.get("title", "").strip()
     if not title or len(title) < 10:
@@ -131,32 +188,44 @@ def _normalize_news_item(item: Dict) -> Optional[Dict]:
         return None
     summary = item.get("summary", "").strip() or item.get("description", "").strip()
 
-    # Extract images
-    image_urls = []
+    # ── Сбор фото из всех возможных полей источника ──
+    # Источник (par/data/furniture-news.json) отдаёт и `image` (single) и
+    # `images` (list). `image` почти всегда дублирует первый элемент `images`,
+    # поэтому ставим его первым, а дедупликация ниже уберёт повторы.
+    raw_images: List[str] = []
+
+    # Списковые поля
     for field in ["images", "image_urls", "photos"]:
         val = item.get(field, [])
         if isinstance(val, list):
             for img in val:
                 if isinstance(img, str) and img.startswith("http"):
-                    image_urls.append(html_unescape(img))
+                    raw_images.append(html_unescape(img))
+        elif isinstance(val, str) and val.startswith("http"):
+            # На случай если поле вдруг строка, а не список
+            raw_images.append(html_unescape(val))
 
+    # Одиночное поле — ставим в начало (обычно это «обложка» новости)
     single_image = item.get("image", "") or item.get("thumbnail", "")
-    if single_image:
-        if isinstance(single_image, str) and single_image.startswith("http"):
-            image_urls.insert(0, html_unescape(single_image))
+    if isinstance(single_image, str) and single_image.startswith("http"):
+        raw_images.insert(0, html_unescape(single_image))
 
-    # Dedup: strip query strings AND CDN size suffixes (e.g. -1280-80, -1920-80)
-    # This prevents sending multi-resolution variants of the same photo
-    seen = set()
-    unique_images = []
-    for img_url in image_urls:
-        base_url = img_url.split('?')[0]
-        # Normalize CDN size suffixes: -1280-80.png, -1920-80.png, -1600-80.png, etc.
-        # Remove the size pattern to get a canonical key for dedup
-        canonical = re.sub(r'-\d+-\d+(?=\.\w+$)', '', base_url)
-        if canonical not in seen:
-            seen.add(canonical)
-            unique_images.append(img_url)
+    # ── Дедупликация по каноническому ключу + фильтр не-фото ──
+    seen_keys: set = set()
+    unique_images: List[str] = []
+    for img_url in raw_images:
+        if not _is_likely_photo_url(img_url):
+            logger.debug(f"Skipping non-photo URL: {img_url[:80]}")
+            continue
+        key = _canonical_image_key(img_url)
+        if key in seen_keys:
+            logger.debug(f"Dedup image (scheme/size variant): {img_url[:80]}")
+            continue
+        seen_keys.add(key)
+        unique_images.append(img_url)
+
+    # Telegram send_media_group: максимум 10 элементов
+    unique_images = unique_images[:10]
 
     lang = item.get("lang", "") or _detect_language(title)
     source = item.get("source", "") or "unknown"
@@ -169,7 +238,7 @@ def _normalize_news_item(item: Dict) -> Optional[Dict]:
         "source": source,
         "category": "furniture",
         "lang": lang,
-        "image_urls": unique_images[:10],
+        "image_urls": unique_images,
         "published": published,
         "id": item.get("id", ""),
     }

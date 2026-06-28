@@ -39,8 +39,6 @@ from typing import Dict, List, Optional
 
 from zoneinfo import ZoneInfo
 
-import httpx
-
 from aiogram import Bot
 from aiogram.types import FSInputFile
 
@@ -53,6 +51,7 @@ from channel import (
     _strip_footer,
     TELEGRAM_MEDIA_TEXT_LIMIT,
     POST_FOOTER,
+    _download_and_validate_image,
 )
 
 logger = logging.getLogger("dasha.masha")
@@ -631,6 +630,8 @@ class MashaKitchenGenerator:
         """Скачать изображение и отправить фото+caption в канал.
 
         caption строится под медиа-лимит (1024) с одним футером.
+        Скачивание и валидация — через общий helper channel._download_and_validate_image
+        (content-type + magic bytes), чтобы защитить отправку от битых/не-фото ответов.
         """
         if not self._bot:
             return False
@@ -640,31 +641,24 @@ class MashaKitchenGenerator:
 
         tmp_path: Optional[str] = None
         try:
-            async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
-                img_resp = await client.get(image_url)
-                if img_resp.status_code != 200:
-                    logger.warning(f"Маша: download image HTTP {img_resp.status_code}")
-                    return False
+            import tempfile as _tempfile
+            tmp_dir = _tempfile.mkdtemp(prefix="masha_kitchen_")
+            try:
+                tmp_path = await _download_and_validate_image(
+                    client_url=image_url, tmp_dir=tmp_dir, idx=0,
+                )
+            finally:
+                # tmp_dir cleaned below; helper writes file inside it
+                pass
 
-                content_type = img_resp.headers.get("content-type", "").lower()
-                ext = ".jpg"
-                if "png" in content_type:
-                    ext = ".png"
-                elif "webp" in content_type:
-                    ext = ".webp"
-
-                # Сохраняем во временный файл
-                fd, tmp_path = tempfile.mkstemp(suffix=ext, prefix="masha_kitchen_")
+            if not tmp_path:
+                logger.warning(f"Маша: image download/validation failed: {image_url[:80]}")
+                # Удалим пустую tmp_dir
                 try:
-                    with os.fdopen(fd, "wb") as f:
-                        f.write(img_resp.content)
+                    os.rmdir(tmp_dir)
                 except Exception:
-                    # Если не удалось открыть — закрываем fd вручную
-                    try:
-                        os.close(fd)
-                    except Exception:
-                        pass
-                    raise
+                    pass
+                return False
 
             photo = FSInputFile(tmp_path)
             await self._bot.send_photo(
@@ -683,6 +677,12 @@ class MashaKitchenGenerator:
             if tmp_path:
                 try:
                     os.unlink(tmp_path)
+                except Exception:
+                    pass
+                # Удалим родительский tmp_dir, если он пуст
+                try:
+                    parent = os.path.dirname(tmp_path)
+                    os.rmdir(parent)
                 except Exception:
                     pass
 

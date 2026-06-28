@@ -213,6 +213,105 @@ def _truncate_for_channel(text: str, has_media: bool = False) -> str:
     return _build_post_with_footer(text, has_media=has_media)
 
 
+# ── Image download & validation ──────────────────────────────────────────────
+# Telegram send_photo / send_media_group принимают только растровые фото
+# (jpeg/png/webp). Если среди скачанных файлов окажется HTML-страница ошибки
+# (с HTTP 200!), SVG, GIF-анимация или пустой файл — весь media_group упадёт.
+# Поэтому каждый файл валидируется по content-type + magic bytes + размер.
+
+# Минимальный размер фото — отсекает трекинг-пиксели 1x1 и пустые ответы.
+_MIN_IMAGE_BYTES = 1024
+
+
+def _image_ext_from_content_type(content_type: str) -> str:
+    """Определить расширение файла по content-type."""
+    ct = (content_type or "").lower()
+    if "png" in ct:
+        return ".png"
+    if "webp" in ct:
+        return ".webp"
+    # По умолчанию jpg (включая image/jpeg)
+    return ".jpg"
+
+
+def _validate_image_bytes(data: bytes) -> str:
+    """Проверить magic bytes скачанного файла.
+
+    Возвращает расширение (".jpg"/".png"/".webp") если файл — валидное фото,
+    иначе пустую строку.
+    """
+    if not data or len(data) < _MIN_IMAGE_BYTES:
+        return ""
+    # JPEG: FF D8 FF
+    if data[:3] == b'\xff\xd8\xff':
+        return ".jpg"
+    # PNG: 89 50 4E 47 0D 0A 1A 0A
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return ".png"
+    # WebP: RIFF....WEBP
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return ".webp"
+    return ""
+
+
+async def _download_and_validate_image(client_url: str, tmp_dir: str, idx: int) -> Optional[str]:
+    """Скачать URL и провалидировать, что это фото.
+
+    Возвращает путь к сохранённому файлу или None (если не фото / ошибка / пусто).
+    Если http:// URL не отдал изображение — пробуем https:// вариант.
+    """
+    import httpx
+    import os
+
+    async def _try_fetch(url: str) -> Optional[bytes]:
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    logger.debug(f"Image {idx+1} HTTP {resp.status_code}: {url[:80]}")
+                    return None
+                content_type = resp.headers.get("content-type", "").lower()
+                # Жёсткий фильтр: content-type должен быть image/*
+                if not content_type.startswith("image/"):
+                    logger.debug(
+                        f"Image {idx+1} not image/* ({content_type}): {url[:80]}"
+                    )
+                    return None
+                # GIF → анимация, send_photo её не примет как фото надёжно
+                if "gif" in content_type or "svg" in content_type:
+                    logger.debug(f"Image {idx+1} skipped ({content_type}): {url[:80]}")
+                    return None
+                return resp.content
+        except Exception as e:
+            logger.debug(f"Image {idx+1} fetch error ({url[:80]}): {e}")
+            return None
+
+    data = await _try_fetch(client_url)
+
+    # Если http:// не сработал — пробуем https:// вариант того же URL
+    if not data and client_url.startswith("http://"):
+        https_url = "https://" + client_url[len("http://"):]
+        data = await _try_fetch(https_url)
+
+    if not data:
+        return None
+
+    # Валидация по magic bytes (защита от content-type-спуфинга)
+    ext = _validate_image_bytes(data)
+    if not ext:
+        logger.debug(f"Image {idx+1} failed magic-bytes validation: {client_url[:80]}")
+        return None
+
+    img_path = os.path.join(tmp_dir, f"post_img_{idx}{ext}")
+    try:
+        with open(img_path, "wb") as f:
+            f.write(data)
+    except Exception as e:
+        logger.warning(f"Image {idx+1} save error: {e}")
+        return None
+    return img_path
+
+
 class ChannelManager:
     """Manages posting to @abakan_mebel channel.
 
@@ -262,9 +361,11 @@ class ChannelManager:
             return False
 
         # Generate post using AI (local model — PRIMARY)
+        image_count = len(item.get("image_urls", []) or [])
         response = await ai_router.generate_channel_post(
             topic=item["title"],
             source_text=item.get("summary", ""),
+            image_count=image_count,
         )
 
         if response.error or not response.text:
@@ -542,6 +643,16 @@ class ChannelManager:
         For 2-10 images: uses send_media_group (album layout).
         Caption is attached to the first image only (Telegram limit: 1024 chars).
 
+        УСТОЙЧИВОСТЬ (v2):
+          - Каждый файл скачивается и ВАЛИДИРУЕТСЯ (content-type + magic bytes
+            + размер > 0). Битые/не-фото ответы (HTML-ошибка с HTTP 200, пустой
+            файл, SVG) пропускаются — это спасает весь альбом от падения.
+          - Скачивание нескольких фото идёт конкурентно (asyncio.gather) —
+            в 3-5 раз быстрее для альбомов.
+          - Если http:// URL не отдал изображение — пробуем https:// вариант.
+          - Если валидных фото не осталось — возвращаем False (fallback на
+            text-only в вызывающем коде).
+
         NOTE: `text` must already include the footer (built by
         _build_post_with_footer). This method does NOT re-append the footer
         to avoid duplication. If the text exceeds the media caption limit,
@@ -559,40 +670,36 @@ class ChannelManager:
         import tempfile
         import os
 
-        # Download images
-        downloaded = []
         tmp_dir = tempfile.mkdtemp()
+        # Сохраняем пары (порядковый_индекс, путь) чтобы восстановить порядок
+        # после конкурентного скачивания.
+        downloaded: List[tuple] = []
         try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                for i, url in enumerate(image_urls[:10]):
-                    try:
-                        img_response = await client.get(url)
-                        if img_response.status_code != 200:
-                            logger.warning(f"Image {i+1} download failed: HTTP {img_response.status_code}")
-                            continue
+            # Конкурентное скачивание + валидация каждого файла
+            urls_to_try = image_urls[:10]
+            tasks = [
+                _download_and_validate_image(client_url=u, tmp_dir=tmp_dir, idx=i)
+                for i, u in enumerate(urls_to_try)
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for i, res in enumerate(results):
+                if isinstance(res, Exception):
+                    logger.warning(f"Image {i+1} download exception: {res}")
+                    continue
+                if res:
+                    downloaded.append((i, res))
 
-                        content_type = img_response.headers.get("content-type", "")
-                        ext = ".jpg"
-                        if "png" in content_type:
-                            ext = ".png"
-                        elif "webp" in content_type:
-                            ext = ".webp"
+            # Восстанавливаем исходный порядок фото (как в новости)
+            downloaded.sort(key=lambda x: x[0])
+            valid_paths = [p for _, p in downloaded]
 
-                        img_path = os.path.join(tmp_dir, f"post_img_{i}{ext}")
-                        with open(img_path, "wb") as f:
-                            f.write(img_response.content)
-                        downloaded.append(img_path)
-                    except Exception as e:
-                        logger.warning(f"Image {i+1} download error: {e}")
-                        continue
-
-            if not downloaded:
-                logger.warning("No images downloaded successfully")
+            if not valid_paths:
+                logger.warning("No valid images downloaded — falling back to text-only")
                 return False
 
             # Single image — use send_photo
-            if len(downloaded) == 1:
-                photo = FSInputFile(downloaded[0])
+            if len(valid_paths) == 1:
+                photo = FSInputFile(valid_paths[0])
                 await self._bot.send_photo(
                     chat_id=chat_id,
                     photo=photo,
@@ -602,7 +709,7 @@ class ChannelManager:
             else:
                 # Multiple images — use send_media_group (album)
                 media = []
-                for i, img_path in enumerate(downloaded):
+                for i, img_path in enumerate(valid_paths):
                     photo = FSInputFile(img_path)
                     if i == 0:
                         # Caption only on first photo
@@ -619,7 +726,10 @@ class ChannelManager:
                     disable_notification=True,
                 )
 
-            logger.info(f"Post with {len(downloaded)} image(s) sent successfully")
+            logger.info(
+                f"Post with {len(valid_paths)} image(s) sent successfully "
+                f"(of {len(urls_to_try)} requested)"
+            )
             return True
 
         except Exception as e:
@@ -627,7 +737,7 @@ class ChannelManager:
             return False
         finally:
             # Cleanup temp files
-            for img_path in downloaded:
+            for _, img_path in downloaded:
                 try:
                     os.unlink(img_path)
                 except Exception:

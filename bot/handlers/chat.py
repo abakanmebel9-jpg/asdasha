@@ -38,6 +38,7 @@ from bot.dasha import (
 )
 from ai.router import ai_router
 from bot.optimizations import adaptive_max_chars, chat_type_context, dedup_check, dedup_store
+from bot.group_memory import group_memory
 
 logger = logging.getLogger("dasha.handlers.chat")
 
@@ -93,6 +94,19 @@ def _safe_truncate(text: str, max_len: int) -> str:
 
     truncated += "…"
     return truncated
+
+
+# HTML-теги не несут смысла для контекста беседы в памяти — чистим, чтобы
+# сниппеты в промпте читались естественно («Даша: «Звоните +7...»», а не с
+# <a href=...>). Эмодзи оставляем.
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html_for_memory(text: str) -> str:
+    """Убрать HTML-теги из текста для хранения в group_memory."""
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", _TAG_RE.sub("", text)).strip()
 
 
 # ── Rate limiting ──────────────────────────────────────────────────────────────
@@ -240,10 +254,27 @@ def _is_conversational(text: str) -> bool:
 
 
 def _is_reply_to_bot(message: Message) -> bool:
-    """Проверяет, является ли сообщение ответом на сообщение бота."""
+    """Проверяет, является ли сообщение ответом на сообщение самой Даши.
+
+    ВАЖНО: проверяем ID бота, а не просто is_bot — иначе Даша реагировала бы
+    на ответы ЛЮБОМУ боту в группе (древовидные ответы, ответы другим ботам).
+    """
     if not message.reply_to_message:
         return False
-    return message.reply_to_message.from_user and message.reply_to_message.from_user.is_bot
+    sender = message.reply_to_message.from_user
+    if not sender:
+        return False
+    # Надёжная проверка: сравниваем с ID нашего бота (message.bot.id)
+    try:
+        bot_id = message.bot.id
+        if bot_id and sender.id == bot_id:
+            return True
+    except Exception:
+        pass
+    # Fallback: если ID бота недоступен — проверяем username @asdasha_bot
+    if sender.username and sender.username.lower() == "asdasha_bot":
+        return True
+    return False
 
 
 def _is_bot_question(text: str) -> bool:
@@ -569,32 +600,80 @@ async def handle_text_message(message: Message):
         else:
             context_additions += f"\n\nНовый собеседник — {user_identity}. Будь дружелюбной! "
     else:
-        # In group — Dasha knows the user by name
-        context_additions += chat_type_context(message)
+        # ── ГРУППА: Даша понимает, КТО пишет и ЧТО недавно обсуждали ──
+        # Запоминаем входящее сообщение в rolling-память чата, чтобы Даша
+        # могла ссылаться на недавний диалог и обращаться к собеседникам.
+        chat_id_int = message.chat.id
+        group_memory.remember(
+            chat_id=chat_id_int,
+            user_id=user_id,
+            user_name=user_name,
+            username=user_username,
+            text=text,
+        )
+
         chat_name = message.chat.title or "группа"
         user_identity = f"{user_name}"
         if user_username:
             user_identity += f" (@{user_username})"
-        context_additions += f"\n\nТы в чате '{chat_name}'. Пишет {user_identity}."
 
-        # More detailed instructions for mentioned
+        # Профиль участника: сколько реплик в этом чате за последний час
+        profile = group_memory.user_profile(chat_id_int, user_id)
+        is_returning = profile["count"] > 1
+
+        context_additions += f"\n\n[Контекст чата] Ты в чате «{chat_name}». Пишет {user_identity}."
+        if is_returning:
+            context_additions += (
+                f" Это знакомый собеседник ({profile['count']} сообщений в этом чате за час). "
+                f"Можешь обратиться к нему по имени и продолжить беседу."
+            )
+            if profile["last_text"]:
+                context_additions += f" Его предыдущая реплика: «{profile['last_text']}»."
+        else:
+            context_additions += (
+                " Это новый собеседник в этом чате — будь приветливой, представься "
+                "как дизайнер мебели, если уместно."
+            )
+
+        # Контекст недавней беседы в чате (кто что говорил)
+        context_additions += group_memory.build_context_for_prompt(
+            chat_id=chat_id_int,
+            current_user_id=user_id,
+            current_user_name=user_name,
+        )
+
+        # Инструкции по форме ответа — зависят от типа сообщения
         if is_mentioned:
             context_additions += (
                 " Тебя УПОМЯНУЛИ — отвечай развёрнуто, как эксперт-дизайнер. "
-                "Будь живой, покажи интерес к вопросу."
+                "Будь живой, покажи интерес к вопросу. "
+                "Обратись к собеседнику по имени, задай встречный вопрос — "
+                "стимулируй диалог."
             )
         elif _is_reply_to_bot(message):
             context_additions += (
-                " Это ответ на твоё сообщение — продолжи диалог естественно."
+                " Это ответ на твоё сообщение — продолжи диалог естественно, "
+                "не повторяйся. Если уместно — задай уточняющий вопрос."
             )
-        elif _is_conversational(text):
+        elif is_conversational_msg:
             context_additions += (
-                " Короткая разговорная фраза — отреагируй живо. 1-2 предложения."
+                " Короткая разговорная фраза — отреагируй живо, 1-2 предложения. "
+                "Можешь подхватить настроение беседы."
             )
         else:
             context_additions += (
-                " Комментируешь по делу, но живо — 1-3 предложения. "
-                "Добавь экспертное мнение как дизайнер."
+                " Комментируй по делу, но живо — 1-3 предложения. "
+                "Добавь экспертное мнение как дизайнер. "
+                "Если тема обсуждаемая — вплетись в разговор, "
+                "не отвечай «в вакууме»."
+            )
+
+        # Активное участие: Даша иногда задаёт встречный вопрос, чтобы
+        # поддерживать диалог (особенно в мебельной теме)
+        if is_furniture and not is_mentioned:
+            context_additions += (
+                " Раз тема мебельная — дай полезный совет и завершай "
+                "коротким вовлекающим вопросом."
             )
 
     # Add knowledge context for both private and group
@@ -622,6 +701,9 @@ async def handle_text_message(message: Message):
         phone_response += '\n\n💬 <a href="https://wa.me/79134483717">WhatsApp</a>\n🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
         await message.answer(phone_response[:max_chars])
         await add_chat_message(message.from_user.id, "assistant", phone_response)
+        if chat_type in ("group", "supergroup"):
+            _mark_chat_responded(message.chat.id)
+            group_memory.remember_dasha(message.chat.id, _strip_html_for_memory(phone_response))
         return
 
     # Get AI response (router uses compact system prompt + our additions)
@@ -645,6 +727,8 @@ async def handle_text_message(message: Message):
         # Отметить, что Даша ответила в этом чате (для per-chat cooldown)
         if chat_type in ("group", "supergroup"):
             _mark_chat_responded(message.chat.id)
+            # Запомнить свой ответ в контексте чата — для连贯ности дальнейшего диалога
+            group_memory.remember_dasha(message.chat.id, _strip_html_for_memory(reply))
         # Add reaction to original message in groups
         await _try_add_reaction(message)
     elif response.error and "rate limit" not in str(response.error).lower():
@@ -654,6 +738,7 @@ async def handle_text_message(message: Message):
             await message.answer(fallback[:max_chars])
             if chat_type in ("group", "supergroup"):
                 _mark_chat_responded(message.chat.id)
+                group_memory.remember_dasha(message.chat.id, _strip_html_for_memory(fallback))
         else:
             logger.error(f"AI error for user {message.from_user.id}: {response.error}")
             # Last-resort message — в группе не отправляем (чтобы не спамить)
@@ -701,6 +786,17 @@ async def handle_photo(message: Message):
         first_name=message.from_user.first_name or "",
     )
 
+    # В группе — запомним фото-сообщение в контексте чата (по подписи),
+    # чтобы Даша понимала, о чём шла речь, и в следующих репликах.
+    if chat_type in ("group", "supergroup"):
+        group_memory.remember(
+            chat_id=message.chat.id,
+            user_id=message.from_user.id,
+            user_name=message.from_user.first_name or "",
+            username=message.from_user.username or "",
+            text=(caption or "[фото без подписи]"),
+        )
+
     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
 
     # Build prompt from caption
@@ -713,6 +809,7 @@ async def handle_photo(message: Message):
         user_id=message.from_user.id,
         message=prompt,
         route_type="comment" if chat_type in ("group", "supergroup") else "chat",
+        save_history=(chat_type == "private"),
     )
 
     if response.ok and response.text:
@@ -721,6 +818,7 @@ async def handle_photo(message: Message):
         await message.answer(reply)
         if chat_type in ("group", "supergroup"):
             _mark_chat_responded(message.chat.id)
+            group_memory.remember_dasha(message.chat.id, _strip_html_for_memory(reply))
         await _try_add_reaction(message)
     else:
         if chat_type == "private":
@@ -776,15 +874,26 @@ async def handle_media(message: Message):
     if is_priority or random.random() < 0.30:
         caption = message.caption or ""
         media_type = "стикер" if message.sticker else ("гифку" if message.animation else ("видео" if message.video else "документ"))
+        # Запомним медиа-сообщение в контексте чата
+        group_memory.remember(
+            chat_id=message.chat.id,
+            user_id=message.from_user.id,
+            user_name=message.from_user.first_name or "",
+            username=message.from_user.username or "",
+            text=(caption or f"[{media_type}]"),
+        )
         prompt = f"В группе прислали {media_type}. Реагируй коротко и живо (1 предложение)." + (f" Подпись: «{caption}»." if caption else "")
         response = await ai_router.chat(
             user_id=message.from_user.id,
             message=prompt,
             route_type="comment",
+            save_history=False,
         )
         if response.ok and response.text:
-            await message.answer(_safe_truncate(response.text.strip(), adaptive_max_chars(chat_type)))
+            reply = _safe_truncate(response.text.strip(), adaptive_max_chars(chat_type))
+            await message.answer(reply)
             _mark_chat_responded(message.chat.id)
+            group_memory.remember_dasha(message.chat.id, _strip_html_for_memory(reply))
         await _try_add_reaction(message)
     else:
         await _try_add_reaction(message)
