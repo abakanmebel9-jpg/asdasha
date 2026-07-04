@@ -137,43 +137,131 @@ class DashaBot:
         except: pass
 
     async def _channel_scheduler(self):
-        """Background task: periodically post furniture/interior content to @abakan_mebel."""
+        """Background task: post furniture news from furniture-news.json to @abakan_mebel.
+        Fetches from abakanmebel9-jpg/par repo (self-updating source), extracts photos,
+        generates AI commentary, posts with photo to channel.
+        """
         from bot.persona import CHANNEL_POST_PROMPT
         await asyncio.sleep(120)
         post_interval = 1200  # 20 min
+        NEWS_URL = "https://raw.githubusercontent.com/abakanmebel9-jpg/par/main/data/furniture-news.json"
+
         while True:
             try:
                 channel_id = int(config.CHANNEL_ID)
                 mood = await current_mood_descriptor()
-                # Furniture/interior topics for channel posts
-                topics = [
-                    "скандинавский стиль в интерьере — принципы и советы",
-                    "как выбрать кухонный гарнитур — материалы и фурнитура",
-                    "встроенные шкафы-купе — плюсы и минусы",
-                    "тренды в дизайне мебели 2025",
-                    "массив дерева vs ЛДСП — что выбрать",
-                    "как спроектировать гардеробную комнату",
-                    "цветовые решения для маленькой квартиры",
-                    "мягкая мебель — как выбрать качественный диван",
-                    "освещение в интерьере — советы дизайнера",
-                    "лофт стиль в городской квартире",
-                    "детская мебель — безопасность и эргономика",
-                    "как сэкономить на мебели без потери качества",
-                    "мебель на заказ vs готовая — что выгоднее",
-                    "хранение на кухне — 5 идей от дизайнера",
-                ]
-                topic = random.choice(topics)
-                prompt = f"Напиши пост для канала @abakan_mebel на тему: {topic}. Настроение: {mood}. 3-5 предложений, живо, с эмодзи, экспертно. Добавь в конце: 📞 {config.PHONE} | abakanmebel.online"
-                post = await ai_client.chat(prompt, system=CHANNEL_POST_PROMPT, fast=True, max_tokens=400, allow_static_fallback=False)
-                if post:
-                    post = post.strip()
-                    if not post.endswith("@abakan_mebel"):
-                        post += "\n\n🛋 @abakan_mebel"
-                    await self.bot.send_message(channel_id, post[:4000])
-                    logger.info(f"Channel: posted furniture content ({len(post)} chars)")
-            except asyncio.CancelledError: break
+
+                # 1. Fetch furniture-news.json
+                import httpx
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                    resp = await client.get(NEWS_URL, headers={"User-Agent": "DashaBot/1.0"})
+                if resp.status_code != 200:
+                    logger.warning(f"News fetch failed: HTTP {resp.status_code}")
+                    await asyncio.sleep(post_interval)
+                    continue
+
+                news_data = resp.json()
+                all_items = news_data.get("items", [])
+                if not all_items:
+                    logger.warning("No news items in furniture-news.json")
+                    await asyncio.sleep(post_interval)
+                    continue
+
+                logger.info(f"Fetched {len(all_items)} furniture news items")
+
+                # 2. Find unposted news item
+                news_item = None
+                for item in all_items:
+                    news_id = item.get("id", "")
+                    if news_id and not await db.is_news_posted(news_id):
+                        news_item = item
+                        break
+
+                if not news_item:
+                    # All items posted — reset
+                    logger.info("All furniture news already posted — resetting posted_news")
+                    try:
+                        conn = db._conn()
+                        await conn.execute("DELETE FROM posted_news")
+                        await conn.commit()
+                    except: pass
+                    news_item = all_items[0]
+
+                title = news_item.get("title", "")
+                summary = news_item.get("summary", "")
+                url = news_item.get("url", "")
+                image_url = news_item.get("image", "")
+                source = news_item.get("source", "")
+                news_id = news_item.get("id", "")
+
+                logger.info(f"Selected furniture news: {title[:60]} (img: {'yes' if image_url else 'no'})")
+
+                # 3. Generate AI commentary — match old format: 500-1000 chars, furniture expert
+                prompt = (
+                    f"Напиши пост для канала @abakan_mebel с комментарием на эту новость о мебели/интерьере.\n\n"
+                    f"Заголовок новости: {title}\n"
+                    f"Краткое содержание: {summary[:400]}\n\n"
+                    f"Требования:\n"
+                    f"- Напиши СВОЙ комментарий как дизайнер мебели (НЕ копируй новость!)\n"
+                    f"- 500-900 символов, живой, экспертный, с мнением\n"
+                    f"- Эмодзи уместно (🛋✨🏠🎨📐🪵)\n"
+                    f"- Упомяни материалы, стили, дизайн если есть\n"
+                    f"- Поделись личным мнением как Даша (дизайнер мебели, Абакан)\n"
+                    f"- Женский род, по-русски\n"
+                    f"- Настроение: {mood}\n"
+                    f"- НЕ добавляй ссылки и НЕ пиши «Источник»\n"
+                    f"- НЕ начинай с «Даша:»"
+                )
+                ai_commentary = await ai_client.chat(
+                    prompt, system=CHANNEL_POST_PROMPT,
+                    max_tokens=800, temperature=0.9, allow_static_fallback=False
+                )
+
+                if not ai_commentary:
+                    logger.warning("AI commentary empty — skipping post")
+                    await asyncio.sleep(post_interval)
+                    continue
+
+                # 4. Build post text — match old format: AI text + footer
+                post_text = ai_commentary.strip()[:3000]
+                if not post_text.endswith("@abakan_mebel"):
+                    post_text += "\n\n🛋 @abakan_mebel"
+
+                # 5. Download image and post with photo
+                posted = False
+                if image_url:
+                    try:
+                        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as img_client:
+                            img_resp = await img_client.get(image_url, headers={"User-Agent": "Mozilla/5.0 (compatible; DashaBot/1.0)"})
+                        if img_resp.status_code == 200 and len(img_resp.content) > 1000:
+                            from io import BytesIO
+                            photo = BytesIO(img_resp.content)
+                            photo.name = "news.jpg"
+                            caption = post_text[:1000]
+                            await self.bot.send_photo(channel_id, photo, caption=caption)
+                            posted = True
+                            logger.info(f"Channel: posted NEWS+photo ({len(post_text)} chars) — {title[:40]}")
+                    except Exception as e:
+                        logger.warning(f"Image download failed: {e}")
+
+                # 6. Fallback: post text only
+                if not posted:
+                    try:
+                        await self.bot.send_message(channel_id, post_text[:4096])
+                        posted = True
+                        logger.info(f"Channel: posted NEWS text-only ({len(post_text)} chars) — {title[:40]}")
+                    except Exception as e:
+                        logger.error(f"Channel post failed: {e}")
+
+                # 7. Mark news as posted
+                if posted and news_id:
+                    await db.mark_news_posted(news_id, title)
+
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.error(f"Channel scheduler error: {e}")
+
             await asyncio.sleep(post_interval)
 
     async def _notify_owner(self):
