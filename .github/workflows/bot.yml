@@ -1,54 +1,14 @@
-name: Dasha Bot — MULTI-PROVIDER v7.0 — Даша Дизайнер Мебели
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Dasha Bot v7.0 — MULTI-PROVIDER FALLBACK + 33 Pollinations models
-#
-#   FAILOVER CHAIN:
-#     Local (RuadaptQwen3-4B) → GitHub Models → HuggingFace →
-#     Groq → Gemini → OpenRouter → Cerebras → Pollinations
-#
-#   ROUTE STRATEGY:
-#     CHAT/FUNCTION: Local → GitHub → ... → Pollinations auth (33 models)
-#     COMMENT: cloud-only → GitHub → ... → Pollinations free only (no local, no auth)
-#
-#   - LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (~2.5GB GGUF, CPU)
-#   - 7 CLOUD PROVIDERS: all free, OpenAI-compatible
-#   - Pollinations v7.0: 33 auth models tiered by availability:
-#     7 ALWAYS (openai, mistral, gemma, nova-fast, llama-scout, qwen-coder, mistral-small-3.2)
-#     5 BALANCE-DEPENDENT (gpt-5.4-mini, llama, perplexity-fast, deepseek, perplexity-deep)
-#     8 PREMIUM-SOMETIMES (grok, grok-large, mistral-large, nova, qwen-vision, qwen-vision-pro, step-3.5-flash, step-flash)
-#     13 PREMIUM-ALWAYS-402 (kept as best-effort fallbacks)
-#   - Multi-image support: send_media_group up to 10 photos per post
-#   - libopenblas-dev for fast CPU inference
-#   - FOOTER: Автор @asdasha_bot Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online
-#
-# SECRETS NEEDED (add in GitHub repo Settings → Secrets):
-#   BOT_TOKEN          — Telegram bot token (from @BotFather)
-#   OWNER_ID           — Telegram owner ID
-#   CHANNEL_ID         — Channel ID (-100...)
-#   CHANNEL_USERNAME    — @abakan_mebel
-#   PHONE              — +7 (913) 448-37-17
-#   HF_TOKEN           — HuggingFace token (for model download)
-#   GH_PAT_TOKEN       — GitHub PAT with models:read scope (for GitHub Models + self-dispatch)
-#   POLLINATIONS_API_KEY — enter.pollinations.ai (33 models with auth key)
-#
-# OPTIONAL SECRETS (free API keys for cloud providers):
-#   GROQ_API_KEY       — console.groq.com (free, ultra-fast Llama-3.3-70B)
-#   GEMINI_API_KEY     — aistudio.google.com (free, Gemini-2.0-Flash)
-#   OPENROUTER_API_KEY — openrouter.ai (free, 20+ models)
-#   CEREBRAS_API_KEY   — cloud.cerebras.ai (free, ultra-fast Llama-3.3-70B)
-# ═══════════════════════════════════════════════════════════════════════════
+name: Run Dasha Bot 24/7 (OpenClaw)
 
 on:
   schedule:
-    - cron: '0 0 * * *'      # 00:00 UTC = 07:00 Krasnoyarsk
-    - cron: '0 5 * * *'      # 05:00 UTC = 12:00 Krasnoyarsk
-    - cron: '0 10 * * *'     # 10:00 UTC = 17:00 Krasnoyarsk
-    - cron: '0 15 * * *'     # 15:00 UTC = 22:00 Krasnoyarsk
-    - cron: '0 20 * * *'     # 20:00 UTC = 03:00 Krasnoyarsk
+    - cron: '0 */2 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
 
-# ═══ CRITICAL: Single concurrency group ═══
 concurrency:
   group: dasha-bot-single
   cancel-in-progress: true
@@ -59,47 +19,28 @@ permissions:
 
 env:
   PYTHONUNBUFFERED: "1"
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 345  # ~5h45m
+    timeout-minutes: 345
 
     steps:
-      # ── Kill conflicting runs ──
       - name: Cancel conflicting runs and wait
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
         run: |
-          echo "=== Checking for other running bot instances ==="
           CURRENT_RUN=${{ github.run_id }}
           REPO=${{ github.repository }}
-
           for status in in_progress queued; do
             RUNS=$(curl -s -H "Authorization: token $GH_TOKEN" \
               "https://api.github.com/repos/$REPO/actions/runs?status=$status&per_page=10" \
-              | python3 -c '
-          import sys, json
-          try:
-              d = json.load(sys.stdin)
-              for r in d.get("workflow_runs", []):
-                  if r["id"] != int(sys.argv[1]):
-                      print(r["id"])
-          except: pass
-          ' "$CURRENT_RUN")
-
+              | python3 -c 'import sys,json;d=json.load(sys.stdin);[print(r["id"]) for r in d.get("workflow_runs",[]) if r["id"]!=int(sys.argv[1])]' "$CURRENT_RUN")
             for run_id in $RUNS; do
-              echo "Cancelling $status run: $run_id"
-              curl -s -X POST -H "Authorization: token $GH_TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/$REPO/actions/runs/$run_id/cancel" || true
+              curl -s -X POST -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/$REPO/actions/runs/$run_id/cancel" || true
             done
           done
-
-          echo "Waiting 60s for old bot instances to fully stop..."
           sleep 60
-          echo "=== Ready to start ==="
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -110,274 +51,121 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
+      - name: Set up Node.js (for OpenClaw)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          sudo apt-get update -qq && sudo apt-get install -y -qq libopenblas-dev
-          CMAKE_ARGS="-DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS" pip install 'llama-cpp-python>=0.3.0' --no-cache-dir
           pip install -r requirements.txt
 
-      - name: Clean Python cache
+      - name: Install OpenClaw
         run: |
-          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-          find . -type f -name "*.pyc" -delete 2>/dev/null || true
-          rm -f '=0.3.0'
-          echo "Python cache cleaned"
+          npm install -g openclaw@latest
+          openclaw --version
+
+      - name: Clean Python cache
+        run: find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
       - name: Create data directory
-        run: mkdir -p data models
+        run: mkdir -p data
 
       - name: Restore database cache
         uses: actions/cache@v4
         with:
-          path: data/dasha_bot.db
+          path: data/dasha.db
           key: dasha-bot-db-v1
           restore-keys: |
             dasha-bot-db-
 
-      - name: Cache local model
-        uses: actions/cache@v4
-        with:
-          path: models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf
-          key: ruadapt-qwen3-4b-instruct-q4km-dasha-v1
-          restore-keys: |
-            qwen3-4b-
-            ruadapt-qwen3-4b-
-
-      - name: Download local model (if not cached)
+      - name: Generate OpenClaw config (dry check)
         env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
         run: |
-          mkdir -p models
-          if [ -f "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf" ]; then
-            SIZE=$(stat -c%s "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf" 2>/dev/null || echo 0)
-            SIZE_MB=$((SIZE / 1048576))
-            echo "Model file found in cache: ${SIZE_MB} MB"
-            if [ "$SIZE_MB" -lt 100 ]; then
-              echo "Cached file too small, removing..."
-              rm -f models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf
-            fi
-          fi
+          python3 scripts/gen_openclaw_config.py --out /tmp/oc-preview.json
+          cat /tmp/oc-preview.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('providers:', list(d['models']['providers'].keys())); print('primary:', d['agents']['defaults']['model']['primary'])"
 
-          if [ ! -f "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf" ]; then
-            echo "Downloading RuadaptQwen3-4B-Instruct Q4_K_M (~2.3GB)..."
-            if [ -n "$HF_TOKEN" ]; then
-              echo "Using HF_TOKEN for authenticated download"
-              pip install -q huggingface_hub
-              huggingface-cli download RefalMachine/RuadaptQwen3-4B-Instruct-GGUF Q4_K_M.gguf --local-dir models --token "$HF_TOKEN" || true
-              if [ -f "models/Q4_K_M.gguf" ] && [ ! -f "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf" ]; then
-                mv models/Q4_K_M.gguf models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf
-              fi
-              if [ ! -f "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf" ]; then
-                echo "HF hub download failed, trying direct URL..."
-                curl -L --retry 3 --max-time 600 \
-                  -H "Authorization: Bearer $HF_TOKEN" \
-                  -o models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf \
-                  "https://huggingface.co/RefalMachine/RuadaptQwen3-4B-Instruct-GGUF/resolve/main/Q4_K_M.gguf" || true
-              fi
-              if [ ! -f "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf" ]; then
-                echo "Authenticated download failed, trying unauthenticated..."
-                curl -L --retry 3 --max-time 600 \
-                  -o models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf \
-                  "https://huggingface.co/RefalMachine/RuadaptQwen3-4B-Instruct-GGUF/resolve/main/Q4_K_M.gguf" || true
-              fi
-            else
-              echo "No HF_TOKEN set, trying unauthenticated download..."
-              curl -L --retry 3 --max-time 600 \
-                -o models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf \
-                "https://huggingface.co/RefalMachine/RuadaptQwen3-4B-Instruct-GGUF/resolve/main/Q4_K_M.gguf" || true
-            fi
-          fi
-
-          if [ -f "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf" ]; then
-            SIZE=$(stat -c%s "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf" 2>/dev/null || echo 0)
-            SIZE_MB=$((SIZE / 1048576))
-            echo "Model file: ${SIZE_MB} MB"
-            if [ "$SIZE_MB" -lt 100 ]; then
-              echo "ERROR: Model file too small (${SIZE_MB} MB), likely corrupted!"
-              rm -f models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf
-              echo "ENABLE_LOCAL_MODEL=false" >> $GITHUB_ENV
-            else
-              echo "Model downloaded successfully!"
-            fi
-          else
-            echo "WARNING: Model download failed, running in cloud-only mode"
-            echo "ENABLE_LOCAL_MODEL=false" >> $GITHUB_ENV
-          fi
-
-      - name: Ensure .gitignore allows database
-        run: |
-          if [ -f .gitignore ]; then
-            sed -i '/dasha_bot\.db/d' .gitignore
-          fi
-
-      # ── Run the Bot — UNLIMITED AUTO-RESTART ──
-      - name: Run Dasha Bot
+      - name: Run Dasha Bot (OpenClaw) with unlimited auto-restart
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
           OWNER_ID: ${{ secrets.OWNER_ID }}
+          GH_PAT_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          OPENCLAW_PORT: "18789"
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          CF_ACCOUNT_ID_1: ${{ secrets.CF_ACCOUNT_ID_1 }}
+          CF_API_TOKEN_1: ${{ secrets.CF_API_TOKEN_1 }}
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           CHANNEL_USERNAME: ${{ secrets.CHANNEL_USERNAME }}
           PHONE: ${{ secrets.PHONE }}
-
-          # ── AI PROVIDERS (v4.0 — MULTI-PROVIDER FALLBACK) ──
-          # Primary: Local model
-          ENABLE_LOCAL_MODEL: ${{ env.ENABLE_LOCAL_MODEL || 'true' }}
-          MODEL_PATH: "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf"
-          MODEL_N_CTX: "8192"
-          MODEL_N_THREADS: "3"
-          MODEL_HISTORY_LIMIT: "6"
-          MODEL_AUTO_DOWNLOAD: "true"
-          MODEL_MAX_TOKENS: "2048"
-
-          # Cloud providers — all FREE, configured via secrets
-          # 1. GitHub Models (PAT with models:read scope — GPT-4o-mini)
-          GH_PAT_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
-          GH_REPO: abakanmebel9-jpg/asdasha
-          # 2. Groq (ultra-fast Llama-3.3-70B, ~1s response)
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          # 3. Google Gemini (Gemini-2.0-Flash)
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          # 4. OpenRouter (20+ free models)
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          # 5. Cerebras (ultra-fast Llama-3.3-70B, ~0.3s)
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          # 6. Pollinations (no key needed — always available last resort)
-          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
-          POLLINATIONS_BASE_URL: "https://gen.pollinations.ai"
-          # 6b. DeepInfra (free tier, Qwen3-32B — excellent Russian)
-          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
-
-          # HuggingFace — for model download AND free LLM inference (Qwen2.5/Llama/Mistral)
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-
-          # Database
-          DB_PATH: data/dasha_bot.db
+          DB_PATH: data/dasha.db
           LOG_LEVEL: INFO
-
-          # Schedule settings — 2 posts per hour (interval 30 min)
-          NEWS_INTERVAL_MINUTES: "30"
-          CHANNEL_POST_INTERVAL_MINUTES: "30"
-          HOURLY_POST_LIMIT: "2"
-          DAILY_POST_LIMIT: "48"
-
-          # Group behavior — Даша отвечает на ВСЕ события во ВСЕХ чатах и группах
-          GROUP_RESPOND_ALL: "true"
-          GROUP_COOLDOWN_SECONDS: "8"
-          GROUP_REACTION_PROBABILITY: "0.35"
-          GROUP_IGNORE_BOTS: "true"
-
-          # ── МАША — Kitchen Project Generator (2 раза в день) ──
-          # Маша генерирует проект кухни (AI-изображение + текст, подобный
-          # примеру «Кухни на заказ в Абакане!») и публикует в канал @abakan_mebel.
-          # Расписание — по Красноярскому времени (UTC+7).
-          MASHA_ENABLED: "true"
-          MASHA_POST_TIMES: "10:00,18:00"
         run: |
-          echo "=== Starting Dasha Bot v7.0 — MULTI-PROVIDER FALLBACK + 33 Pollinations models ==="
-          echo "LOCAL MODEL: RuadaptQwen3-4B-Instruct Q4_K_M (PRIMARY for chat/channel)"
-          echo "CLOUD FALLBACK: GitHub → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations"
-          echo "POLLINATIONS v7.0: 33 auth models (7 always + 5 balance + 8 premium-sometimes + 13 premium-402)"
-          echo "NEW MODELS: grok, grok-large, mistral-large, nova, qwen-vision, qwen-vision-pro, step-3.5-flash, step-flash"
-          echo "MULTI-IMAGE: send_media_group support (up to 10 photos per post)"
-          echo "GROUP COMMENTS: cloud-only (local bypassed for speed, ~18s vs ~85s)"
-          echo "CHANNEL: @abakan_mebel (2 posts/hour, every 30 min)"
-          echo "FOOTER: Автор @asdasha_bot Кухни на заказ 📞 +7 (913) 448-37-17 🌐 abakanmebel.online"
-          echo "МАША: kitchen project generator — 2x/day at ${MASHA_POST_TIMES} (Krasnoyarsk, UTC+7)"
-          echo "=== Launching bot with UNLIMITED auto-restart ==="
-
-          # Show configured providers
-          echo ""
-          echo "Configured providers:"
-          [ -n "$GH_PAT_TOKEN" ] && echo "  ✅ GitHub Models (GPT-4.1-mini)" || echo "  ⏭️  GitHub Models (no PAT)"
-          [ -n "$HF_TOKEN" ] && echo "  ✅ HuggingFace (Qwen2.5-7B, Llama-3.1, Mistral)" || echo "  ⏭️  HuggingFace (no HF_TOKEN)"
-          [ -n "$GROQ_API_KEY" ] && echo "  ✅ Groq (Llama-3.3-70B, ultra-fast)" || echo "  ⏭️  Groq (no key)"
-          [ -n "$GEMINI_API_KEY" ] && echo "  ✅ Gemini (2.0-Flash)" || echo "  ⏭️  Gemini (no key)"
-          [ -n "$OPENROUTER_API_KEY" ] && echo "  ✅ OpenRouter (20+ models)" || echo "  ⏭️  OpenRouter (no key)"
-          [ -n "$CEREBRAS_API_KEY" ] && echo "  ✅ Cerebras (ultra-fast)" || echo "  ⏭️  Cerebras (no key)"
-          [ -n "$POLLINATIONS_API_KEY" ] && echo "  ✅ Pollinations v7.0 (33 auth models: 7 always + 5 balance + 8 premium + 13 402)" || echo "  ⏭️  Pollinations (free tier only, no key)"
-          [ -n "$DEEPINFRA_API_KEY" ] && echo "  ✅ DeepInfra (Qwen3-32B, excellent Russian)" || echo "  ⏭️  DeepInfra (no key)"
-          echo ""
-
-          RETRY=0
+          set +e
+          RETRY=0; LAST_START=0
           while true; do
             RETRY=$((RETRY+1))
-            echo "--- Attempt $RETRY ---"
-
+            NOW=$(date +%s)
+            if [ $((NOW - LAST_START)) -gt 600 ]; then RETRY=1; fi
+            LAST_START=$NOW
             python3 -m bot.main
             EXIT_CODE=$?
-            echo "Bot exited with code $EXIT_CODE (attempt $RETRY)"
-
-            if [ $EXIT_CODE -eq 2 ]; then
-              echo "Persistent conflicts — restarting in 10s..."
-              sleep 10
-            elif [ $EXIT_CODE -eq 3 ]; then
-              echo "Health check failure — restarting in 20s..."
-              sleep 20
-            elif [ $EXIT_CODE -eq 0 ]; then
-              echo "Session timeout — restarting in 5s..."
-              sleep 5
-            else
-              if [ $RETRY -le 3 ]; then
-                SLEEP=10
-              elif [ $RETRY -le 6 ]; then
-                SLEEP=15
-              else
-                SLEEP=30
-              fi
-              echo "Bot crashed (code $EXIT_CODE) — restarting in ${SLEEP}s..."
-              sleep $SLEEP
-            fi
+            if [ $EXIT_CODE -eq 0 ]; then sleep 5
+            elif [ $RETRY -le 3 ]; then sleep 10
+            elif [ $RETRY -le 6 ]; then sleep 15
+            else sleep 30; fi
           done
 
       - name: Save database cache
         uses: actions/cache/save@v4
         if: always()
         with:
-          path: data/dasha_bot.db
+          path: data/dasha.db
           key: dasha-bot-db-v1-${{ github.run_id }}
 
       - name: Save database to git
         if: always()
         run: |
-          if [ -f data/dasha_bot.db ]; then
+          if [ -f data/dasha.db ]; then
             git config user.name "Dasha Bot"
             git config user.email "dasha-bot@users.noreply.github.com"
-            rm -f '=0.3.0'
-            git add -f data/dasha_bot.db || true
+            git fetch origin main || true
+            git checkout -B db-update origin/main
+            git add -f data/dasha.db || true
             git diff --staged --quiet || git commit -m "db: update $(date +%Y-%m-%d_%H:%M)" || true
-            git add -A || true
-            git stash --include-untracked || true
-            git pull --rebase origin main || true
-            git stash pop || true
-            git push || true
+            git push origin db-update:main 2>&1 || echo "DB push skipped (newer commits — OK, cached via actions/cache)"
           fi
 
-      # ── Self-dispatch for 24/7 ──
-      - name: Re-dispatch workflow for continuous operation
+      - name: Re-dispatch workflow for 24/7
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
         run: |
-          echo "=== Re-dispatching workflow for 24/7 uptime ==="
           REPO=${{ github.repository }}
           sleep 10
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/$REPO/actions/workflows/bot.yml/dispatches" \
-              -d '{"ref":"main"}')
-            if [ "$HTTP_CODE" = "204" ]; then
-              echo "Workflow re-dispatched successfully (attempt $i)"
-              break
-            fi
-            echo "Re-dispatch attempt $i failed (HTTP $HTTP_CODE), retrying in 10s..."
-            sleep 10
+              -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/$REPO/actions/workflows/bot.yml/dispatches" -d '{"ref":"main"}')
+            if [ "$HTTP_CODE" = "204" ]; then echo "✅ Re-dispatched (attempt $i)"; break; fi
+            echo "❌ Attempt $i failed (HTTP $HTTP_CODE), retrying..."; sleep 15
           done
-          echo "=== Re-dispatch complete ==="
 
       - name: Cleanup
         if: always()
-        run: |
-          echo "=== Bot session ended ==="
+        run: echo "=== Bot session ended ==="

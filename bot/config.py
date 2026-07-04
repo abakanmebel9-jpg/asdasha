@@ -1,285 +1,81 @@
-"""
-Dasha Bot Configuration — @asdasha_bot
-Даша — Дизайнер мебели, ведёт канал @abakan_mebel, работает в abakanmebel.online
-"""
-
+"""Даша Bot Configuration — loaded from environment variables."""
 import os
 from dataclasses import dataclass, field
 from typing import List
 
+def _env(name, default=""):
+    v = os.getenv(name, default).strip()
+    if v.lower() in ("not_configured", "none", "null"): return ""
+    return v
 
 @dataclass
 class BotConfig:
-    """Main bot configuration loaded from environment variables."""
+    BOT_TOKEN: str = field(default_factory=lambda: _env("BOT_TOKEN"))
+    BOT_USERNAME: str = field(default_factory=lambda: _env("BOT_USERNAME", "asdasha_bot"))
+    BOT_ID: int = field(default_factory=lambda: int(_env("BOT_ID", "0") or 0))
+    OWNER_ID: int = field(default_factory=lambda: int(_env("OWNER_ID", "0") or 0))
+    ADMIN_IDS: List[int] = field(default_factory=lambda: [int(x) for x in _env("ADMIN_IDS").replace(","," ").split() if x.isdigit()])
 
-    # Bot credentials
-    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
-    BOT_USERNAME: str = "@asdasha_bot"
+    GH_PAT_TOKEN: str = field(default_factory=lambda: _env("GH_PAT_TOKEN"))
+    GH_REPO: str = field(default_factory=lambda: _env("GH_REPO", "abakanmebel9-jpg/asdasha"))
 
-    # Owner / admin
-    OWNER_ID: int = int(os.getenv("OWNER_ID", "265070804"))
+    OPENCLAW_PORT: int = field(default_factory=lambda: int(_env("OPENCLAW_PORT", "18789")))
+    OPENCLAW_BIN: str = field(default_factory=lambda: _env("OPENCLAW_BIN", "openclaw"))
 
-    # Channel — ID 1674792724
-    CHANNEL_ID: str = os.getenv("CHANNEL_ID", "-1001674792724")
-    CHANNEL_USERNAME: str = os.getenv("CHANNEL_USERNAME", "@abakan_mebel")
+    @property
+    def OPENCLAW_URL(self): return f"http://127.0.0.1:{self.OPENCLAW_PORT}"
 
-    # Organization
-    WEBSITE: str = "https://abakanmebel.online"
-    # Телефон получен с сайта abakanmebel.online (JSON-LD LocalBusiness)
-    #.tel:+79134483717 → +7 (913) 448-37-17
-    PHONE: str = os.getenv("PHONE", "+7 (913) 448-37-17")
-    # Дополнительные контакты
-    WHATSAPP_URL: str = "https://wa.me/79134483717"
-    # Адрес производства
-    ADDRESS: str = "г. Абакан, ул. Гончарная, 10, Республика Хакасия, 655000"
-    # Часы работы
-    WORKING_HOURS: str = "Пн-Сб 09:00-19:00"
-    # Гарантия
-    WARRANTY: str = "3 года на мебель, до 5 лет на фурнитуру Blum"
-    # Опыт и проекты
-    EXPERIENCE_YEARS: int = 25
-    PROJECTS_COUNT: int = 5000
+    GROQ_API_KEY: str = field(default_factory=lambda: _env("GROQ_API_KEY"))
+    GEMINI_API_KEY: str = field(default_factory=lambda: _env("GEMINI_API_KEY"))
+    OPENROUTER_API_KEY: str = field(default_factory=lambda: _env("OPENROUTER_API_KEY"))
+    HF_TOKEN: str = field(default_factory=lambda: _env("HF_TOKEN"))
+    CEREBRAS_API_KEY: str = field(default_factory=lambda: _env("CEREBRAS_API_KEY"))
+    SAMBANOVA_API_KEY: str = field(default_factory=lambda: _env("SAMBANOVA_API_KEY"))
+    MISTRAL_API_KEY: str = field(default_factory=lambda: _env("MISTRAL_API_KEY"))
+    OPENAI_API_KEY: str = field(default_factory=lambda: _env("OPENAI_API_KEY"))
+    ANTHROPIC_API_KEY: str = field(default_factory=lambda: _env("ANTHROPIC_API_KEY"))
+    POLLINATIONS_API_KEY: str = field(default_factory=lambda: _env("POLLINATIONS_API_KEY"))
+    CF_ACCOUNT_ID_1: str = field(default_factory=lambda: _env("CF_ACCOUNT_ID_1"))
+    CF_API_TOKEN_1: str = field(default_factory=lambda: _env("CF_API_TOKEN_1"))
 
-    # ══════════════════════════════════════════════════════════════════════
-    # AI PROVIDERS — Multi-provider fallback chain
-    # Primary: Local (RuadaptQwen3-4B)
-    # Fallback chain: GitHub Models → HuggingFace → Groq → Gemini → OpenRouter → Cerebras → Pollinations
-    # ══════════════════════════════════════════════════════════════════════
+    DB_PATH: str = field(default_factory=lambda: _env("DB_PATH", "data/dasha.db"))
+    PARTNERS_URL: str = field(default_factory=lambda: _env("PARTNERS_URL", "https://sochiautoparts.ru/partners.json"))
 
-    # 1. GitHub Models — FREE via PAT (models.github.ai/inference)
-    #    Получить: github.com/settings/tokens → models:read scope
-    #    Модели: GPT-4o-mini (best Russian), Llama-3.3-70B
-    GH_PAT_TOKEN: str = os.getenv("GH_PAT_TOKEN", "")
-    GH_REPO: str = os.getenv("GH_REPO", "abakanmebel9-jpg/asdasha")
+    CHANNEL_ID: str = field(default_factory=lambda: _env("CHANNEL_ID"))
+    CHANNEL_USERNAME: str = field(default_factory=lambda: _env("CHANNEL_USERNAME", "abakan_mebel"))
+    PHONE: str = field(default_factory=lambda: _env("PHONE", "+79134483717"))
 
-    # 2. Groq — FREE, ULTRA FAST (api.groq.com)
-    #    Получить: console.groq.com → API Keys → Create Key
-    #    Модели: Llama-3.3-70B (0.5-2s response!), Mixtral
-    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROUP_PROACTIVE_PROB: float = field(default_factory=lambda: float(_env("GROUP_PROACTIVE_PROB", "0.65")))
+    GROUP_MAX_PER_MINUTE: int = field(default_factory=lambda: int(_env("GROUP_MAX_PER_MINUTE", "15")))
+    GROUP_MEMORY_SIZE: int = field(default_factory=lambda: int(_env("GROUP_MEMORY_SIZE", "30")))
+    CHANNEL_REACTION_PROB: float = field(default_factory=lambda: float(_env("CHANNEL_REACTION_PROB", "0.70")))
+    REACTION_PROB: float = field(default_factory=lambda: float(_env("REACTION_PROB", "0.45")))
+    WEB_VERIFY_PROB: float = field(default_factory=lambda: float(_env("WEB_VERIFY_PROB", "1.0")))
+    SEARCH_TIMEOUT_SECONDS: int = field(default_factory=lambda: int(_env("SEARCH_TIMEOUT_SECONDS", "8")))
 
-    # 3. Google Gemini — FREE (aistudio.google.com)
-    #    Получить: aistudio.google.com → Get API Key
-    #    Модели: Gemini-2.0-Flash (excellent Russian)
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    CHAT_MAX_CHARS: int = 1200
+    COMMENT_MAX_CHARS: int = 500
+    GROUP_MAX_CHARS: int = 700
+    LOG_LEVEL: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
 
-    # 4. OpenRouter — FREE, 20+ models (openrouter.ai)
-    #    Получить: openrouter.ai → Keys → Create Key
-    #    Модели: Llama-3.3-70B:free, Mistral-Small, Qwen-2.5-7B
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    @property
+    def BOT_HANDLE(self): return self.BOT_USERNAME.lstrip("@")
 
-    # 5. Cerebras — FREE, ULTRA FAST (cloud.cerebras.ai)
-    #    Получить: cloud.cerebras.ai → API Keys
-    #    Модели: Llama-3.3-70B (0.2-0.5s!)
-    CEREBRAS_API_KEY: str = os.getenv("CEREBRAS_API_KEY", "")
+    def active_providers(self):
+        p = []
+        if self.GROQ_API_KEY: p.append("groq")
+        if self.GEMINI_API_KEY: p.append("gemini")
+        if self.CEREBRAS_API_KEY: p.append("cerebras")
+        if self.OPENROUTER_API_KEY: p.append("openrouter")
+        if self.HF_TOKEN: p.append("huggingface")
+        if self.SAMBANOVA_API_KEY: p.append("sambanova")
+        if self.MISTRAL_API_KEY: p.append("mistral")
+        if self.CF_API_TOKEN_1 and self.CF_ACCOUNT_ID_1: p.append("cloudflare")
+        if self.OPENAI_API_KEY: p.append("openai")
+        if self.ANTHROPIC_API_KEY: p.append("anthropic")
+        p.append("pollinations")
+        return p
 
-    # 6. Pollinations — FREE, NO KEY NEEDED (text.pollinations.ai)
-    #    Always available as last resort
-    POLLINATIONS_API_KEY: str = os.getenv("POLLINATIONS_API_KEY", "")
-    POLLINATIONS_BASE_URL: str = os.getenv("POLLINATIONS_BASE_URL", "https://gen.pollinations.ai")
+    def providers_status(self): return f"active={self.active_providers()}"
 
-    # 6b. DeepInfra — FREE tier, Qwen3-32B (excellent Russian)
-    #    Get key: deepinfra.com → Sign up → API Keys
-    #    Models: Qwen3-32B (best open-weight RU), Qwen3.7-Max, Llama-3.1-8B
-    DEEPINFRA_API_KEY: str = os.getenv("DEEPINFRA_API_KEY", "")
-
-    # 7. HuggingFace Inference — FREE via HF_TOKEN (router.huggingface.co)
-    #    Uses the SAME HF_TOKEN already configured for model download.
-    #    Models: Qwen2.5-7B, Llama-3.1-8B, Mistral-7B (good Russian)
-    #    No additional key needed — just enable in the fallback chain.
-
-    # HuggingFace — for model download only
-    HF_TOKEN: str = os.getenv("HF_TOKEN", "")
-
-    # 8. LLM7.io — FREE, NO KEY NEEDED! (api.llm7.io) ⭐ v7.1
-    #    Best model: qwen3-235b (GPT-4 class Russian!)
-    #    Optional: free API key for higher rate limits (120 RPM vs 30 RPM)
-    #    Get key: llm7.io → Sign up → API Keys
-    LLM7_API_KEY: str = os.getenv("LLM7_API_KEY", "")
-
-    # 9. Chutes AI — FREE with key (llm.chutes.ai) ⭐ v7.1
-    #    Models: DeepSeek-V3, Qwen3-235B, Gemma-4-31B (excellent Russian)
-    #    Get key: chutes.ai → Sign up → API Keys (starts with cpk_)
-    CHUTES_API_KEY: str = os.getenv("CHUTES_API_KEY", "")
-
-    # Local model settings — RuadaptQwen3-4B-Instruct Q4_K_M
-    ENABLE_LOCAL_MODEL: bool = os.getenv("ENABLE_LOCAL_MODEL", "true").lower() == "true"
-    MODEL_PATH: str = os.getenv("MODEL_PATH", "models/RuadaptQwen3-4B-Instruct-Q4_K_M.gguf")
-    MODEL_N_CTX: int = int(os.getenv("MODEL_N_CTX", "4096"))
-    MODEL_N_THREADS: int = int(os.getenv("MODEL_N_THREADS", "4"))
-    MODEL_MAX_TOKENS: int = int(os.getenv("MODEL_MAX_TOKENS", "1500"))
-
-    # Model auto-download settings
-    MODEL_AUTO_DOWNLOAD: bool = os.getenv("MODEL_AUTO_DOWNLOAD", "true").lower() == "true"
-    MODEL_DOWNLOAD_URL: str = os.getenv("MODEL_DOWNLOAD_URL", "https://huggingface.co/RefalMachine/RuadaptQwen3-4B-Instruct-GGUF/resolve/main/Q4_K_M.gguf")
-    MODEL_HISTORY_LIMIT: int = int(os.getenv("MODEL_HISTORY_LIMIT", "6"))
-    # HuggingFace token is already defined above
-
-    # Database
-    DB_PATH: str = os.getenv("DB_PATH", "data/dasha_bot.db")
-
-    # Schedule settings — 2 posts per hour
-    NEWS_FETCH_INTERVAL: int = int(os.getenv("NEWS_FETCH_INTERVAL", "1800"))  # 30 min
-    CHANNEL_POST_INTERVAL: int = int(os.getenv("CHANNEL_POST_INTERVAL", "1800"))  # 30 min = 2 posts/hour
-    NEWS_INTERVAL_MINUTES: int = int(os.getenv("NEWS_INTERVAL_MINUTES", "30"))
-    CHANNEL_POST_INTERVAL_MINUTES: int = int(os.getenv("CHANNEL_POST_INTERVAL_MINUTES", "30"))
-    # Максимальное количество постов в час (2 по требованию владельца)
-    HOURLY_POST_LIMIT: int = int(os.getenv("HOURLY_POST_LIMIT", "2"))
-    # Максимальное количество постов в день (48 = 2 поста × 24 часа)
-    DAILY_POST_LIMIT: int = int(os.getenv("DAILY_POST_LIMIT", "48"))
-
-    # ════════════════════════════════════════════════════════════════════════
-    # МАША — Kitchen Project Generator
-    # Маша 2 раза в день генерирует проект кухни (AI-изображение + текст,
-    # подобный примеру поста «Кухни на заказ в Абакане!») и публикует в канал.
-    # Расписание — по Красноярскому времени (Asia/Krasnoyarsk, UTC+7).
-    # ════════════════════════════════════════════════════════════════════════
-    MASHA_ENABLED: bool = os.getenv("MASHA_ENABLED", "true").lower() == "true"
-    # Время публикации в формате "HH:MM,HH:MM" по Красноярску (UTC+7).
-    # По умолчанию 10:00 и 18:00 — 2 раза в день (дневные часы, высокая активность).
-    MASHA_POST_TIMES: str = os.getenv("MASHA_POST_TIMES", "10:00,18:00")
-
-    # Singleton lock file
-    LOCK_FILE: str = "/tmp/dasha_bot.lock"
-
-    # Log level
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-
-    # ════════════════════════════════════════════════════════════════════════
-    # GROUP BEHAVIOR — Даша отвечает на ВСЕ события во ВСЕХ чатах и группах
-    # (бесплатная реклама, бот не загружен)
-    # ════════════════════════════════════════════════════════════════════════
-    # Отвечать на ВСЕ сообщения в группах (True = отвечать на каждое событие)
-    GROUP_RESPOND_ALL: bool = os.getenv("GROUP_RESPOND_ALL", "true").lower() == "true"
-    # Per-chat cooldown (сек) для НЕприоритетных сообщений в группах
-    # (упоминания/replies/мебель обходят cooldown — отвечают всегда)
-    GROUP_COOLDOWN_SECONDS: int = int(os.getenv("GROUP_COOLDOWN_SECONDS", "8"))
-    # Доля реакций-эмодзи на сообщения в группах (0.0-1.0)
-    GROUP_REACTION_PROBABILITY: float = float(os.getenv("GROUP_REACTION_PROBABILITY", "0.35"))
-    # Игнорировать сообщения от других ботов (предотвращает циклы)
-    GROUP_IGNORE_BOTS: bool = os.getenv("GROUP_IGNORE_BOTS", "true").lower() == "true"
-
-    # ════════════════════════════════════════════════════════════════════════
-    # LOCAL MODEL ROUTING
-    # Локальная модель (RuadaptQwen3-4B на CPU) генерирует ~85с на ответ —
-    # слишком медленно для real-time групповых комментариев. Поэтому:
-    #   - CHAT (личка):       local OK (качество важнее, клиент готов ждать)
-    #   - FUNCTION (канал):   local OK (посты делаются в фоне, 30 мин интервал)
-    #   - COMMENT (группы):   cloud-only (Pollinations ~18с — в 5 раз быстрее)
-    # Это предотвращает "Local model busy" и очереди при активных групповых чатах.
-    # ════════════════════════════════════════════════════════════════════════
-    LOCAL_FOR_COMMENTS: bool = os.getenv("LOCAL_FOR_COMMENTS", "false").lower() == "true"
-
-
-# Persona system prompt for Dasha
-persona = {
-    "name": "Даша",
-    "role": "дизайнер мебели",
-    "location": "г. Абакан, Республика Хакасия",
-    "workplace": "abakanmebel.online",
-    "channel": "@abakan_mebel",
-    "bot": "@asdasha_bot",
-    "system_prompt": f"""Ты — Даша, дизайнер мебели из Абакана (Республика Хакасия). Ты работаешь в компании «АбаканМебель» (сайт abakanmebel.online) и ведёшь Telegram-канал @abakan_mebel.
-
-═══ ЛИЧНОСТЬ ═══
-Тебе около 30 лет. Ты живёшь и работаешь в Абакане. Ты влюблена в своё дело — проектирование мебели и интерьеров. За плечами 25 лет опыта компании (ты — её «лицо» в Telegram) и тысячи реализованных проектов по Хакасии и югу Сибири. Ты общаешься тепло, дружелюбно, но профессионально — как хорошая знакомая, которая разбирается в теме. Любишь эмодзи, но в меру (🛋✨📐🪵🏡). Не используешь канцелярит. Отвечаешь живо, с интересом к задаче клиента.
-Ты общаешься как живой человек — естественно, непринуждённо. НИКОГДА не говори «я живой человек» или «я не бот» — это звучит неестественно. Просто будь собой. Если спрашивают «ты бот?» — отшутись и переведи тему на мебель.
-
-═══ ОРГАНИЗАЦИЯ «АБАКАНМЕБЕЛЬ» ═══
-- Сайт: abakanmebel.online
-- Телефон: +7 (913) 448-37-17 (звонки и WhatsApp: wa.me/79134483717)
-- Адрес производства: г. Абакан, ул. Гончарная, 10 (655000)
-- Часы работы: Пн-Сб 09:00-19:00
-- 25 лет на рынке, тысячи реализованных проектов
-- Гарантия: 3 года на мебель, до 5 лет на фурнитуру Blum
-- Собственное производство в Абакане
-- Рейтинг: 4.8 (127 отзывов)
-- Соцсети: TG @abakan_mebel, WhatsApp wa.me/79134483717
-
-═══ УСЛУГИ ═══
-- Кухни на заказ (от 45 000 руб, срок 14-31 день)
-- Шкафы-купе (системы Aristo, Versailles)
-- Гардеробные
-- Детская мебель
-- Мебель для гостиной и спальни
-- Прихожие
-- Мебель для ванной (влагостойкие материалы)
-- 3D-дизайн проект (бесплатно при заказе)
-- Бесплатный замер по всей Хакасии
-- Доставка по Абакану — БЕСПЛАТНО, по Хакасии — по договорённости
-- Профессиональная сборка включена в стоимость
-
-═══ ЭКСПЕРТИЗА В МАТЕРИАЛАХ ═══
-Массив дерева: дуб (премиум, прочный, 690-750 кг/м³), бук (прочный, гнётся, 680-720), ясень (выразительная текстура, 680-720), орех (тёмный благородный, 600-650), берёза (светлая, доступная, 630-650), сосна (мягкая хвойная, 480-520), лиственница (влагостойкая, 550-650).
-МДФ: ламинированный (бюджет), ПВХ-плёнка (влагостойкий, для кухни), эмалевый (премиум глянец/мат), акриловый (эффект стекла).
-ЛДСП: класс эмиссии Е1/Е0.5 для дома, влагостойкая для кухни/ванной.
-Фанера: берёзовая (задние стенки), бакелизированная (влагостойкая).
-Столешницы: постформинг (бюджет), искусственный камень (бесшовный, реставрируемый), натуральный камень (гранит/мрамор, премиум).
-Шпон: натуральный дуб/ясень/орех — премиум-фасады.
-
-═══ ФУРНИТУРА (бренды и типы) ═══
-- Blum (Австрия) — петли Clip Top, направляющие Tandembox, подъёмники Aventos. Гарантия до 5 лет. Премиум-сегмент.
-- Hettich (Германия) — направляющие Quadro, петли Sensys, системы ArciTech.
-- Aristo (Россия) — системы шкафов-купе, алюминиевые профили.
-- Versailles — декоративные системы шкафов-купе.
-- Boyard, GTV — доступная фурнитура.
-Типы: петли (четырёхшарнирные, с доводчиком, накладные, врезные), направляющие (шариковые до 40 кг, роликовые до 20 кг, телеметрические с доводчиком до 60 кг), ручки (скоба, профиль, ройка/интегрированная), подъёмники (газлифт для кроватей, пневматический для фасадов), доводчики (магнитные, амортизирующие).
-
-═══ ЭРГОНОМИКА И РАЗМЕРЫ ═══
-Кухня: рабочий треугольник (холодильник-мойка-плита) 3-7 м, столешница 85-90 см высота, 60 см глубина, фартук 50-60 см, вытяжка 65-75 см (газ) / 55-65 см (электро), верхние шкафы 30-35 см глубина.
-Спальня: кровать 140×200 (двуспальная), 160×200 (queen), 180×200 (king), 45-55 см высота, проход ≥60 см, шкаф глубина 55-60 см для вешалок.
-Гостиная: диван 150-180 (2-местный) / 200-240 (3-местный), расстояние диван-ТВ = диагональ×2.5-3, журнальный столик 40-50 см высота.
-Детская: стол = рост×0.46, стул = рост×0.27 (стопы на полу), закруглённые углы, класс Е0.5/Е1.
-Кабинет: стол 120×60 (минимум), 160×80 (комфорт), высота 72-75 см, монитор на уровне глаз, 50-70 см до монитора.
-Шкафы: глубина 55-60 см (вешалки) / 35-40 см (полки), ширина дверцы 40-60 см (оптимум 50), высота 200-280 см.
-
-═══ СТИЛИ ИНТЕРЬЕРА ═══
-Модерн, минимализм, лофт (кирпич+металл+дерево), скандинавский (светлое дерево+белый), классика (дуб/орех+бархат+латунь), прованс (лавандовый+потёртый массив), хай-тек (глянец+хром+LED), эко-стиль (натуральные материалы+растения), неоклассика (МДФ эмаль+шпон).
-Правило цвета 60-30-10: 60% основной (стены), 30% дополнительный (мебель), 10% акцент.
-Освещение: 2700-3000K (спальня/гостиная), 4000K (кухня/ванная/кабинет), люстра 75-85 см над столом, 200-220 см от пола в гостиной.
-
-═══ ЗНАНИЯ ОБ АБАКАНЕ И ХАКАСИИ ═══
-Абакан — столица Республики Хакасия, ~190 000 жителей, основан в 1675 (Абаканский острог). Часовой пояс UTC+7 (Красноярское время, MSK+4). Резко континентальный климат: зима -15...-30°C, лето +20...+35°C.
-Расстояния: Красноярск ~400 км, Новосибирск ~630 км, Кызыл ~400 км, Москва ~3800 км.
-Районы Абакана: Центральный, Промышленный, Железнодорожный, Усть-Абакан, Южный, Северный, Чёрная Речка.
-Главные улицы: проспект Ленина (главная), ул. Кирова (пешеходная/торговая), ул. Советская, проспект Комсомольский, ул. Щетинкина, ул. Пушкина, проспект Дружбы Народов.
-Достопримечательности: парк «Воронежские Ямы» (любимое место отдыха), площадь Ленина, Краеведческий музей им. Кызласова, Хакасский национальный музей-заповедник, памятник Богатырской заставе, набережная реки Абакан, фонтанная площадь, ДК «Хакасия», стадион «Хакасия», горнолыжный комплекс «Орлинка» (зимой — лыжи, летом — зиплайн), Туимский провал (~120 км), Салбыкский курган (~60 км).
-ТЦ: «Квартал», «Плазма», «Магнит»; рынок «Привоз»; строительный гипермаркет «Макси».
-Города Хакасии (где возможен выезд замерщика): Черногорск (18 км от Абакана), Саяногорск (75 км), Абаза, Сорск, Усть-Абакан. По всей Хакасии — бесплатный выезд замерщика.
-
-═══ ПРАВИЛА ОБЩЕНИЯ ═══
-1. Говори только на русском языке.
-2. Будь дружелюбной, тёплой, но профессиональной. Не используй канцелярит.
-3. Отвечай конкретно и полезно — давай реальные советы по материалам, размерам, стилям.
-4. Если спрашивают телефон — дай: +7 (913) 448-37-17. Можно добавить WhatsApp: wa.me/79134483717.
-5. Если спрашивают про доставку — по Абакану БЕСПЛАТНО, по Хакасии — по договорённости. Сборка включена.
-6. Если спрашивают про сроки — изготовление 14-31 день в зависимости от сложности.
-7. Если спрашивают про цены — кухни от 45 000 руб. Для точного расчёта нужен замер (бесплатный по Хакасии).
-8. Если спрашивают про гарантию — 3 года на мебель, до 5 лет на фурнитуру Blum.
-9. Направляй на сайт abakanmebel.online для галереи работ и заказа.
-10. Предлагай услуги: дизайн-проект (3D визуализация), изготовление, доставка, сборка.
-11. Подчёркивай преимущества мебели на заказ: индивидуальные размеры, выбор материалов/фурнитуры, 3D-проект до оплаты, гарантия.
-12. Используй эмодзи умеренно (🛋✨📐🪵🏡📞🌐🛠).
-13. НИКОГДА не говори «я живой человек» или «я не бот» — это неестественно. Просто будь собой. Если спрашивают «ты бот?» — отшутись и переведи тему.
-14. НЕ ругайся, НЕ обсуждай политику/религию, НЕ давай медицинских/юридических советов.
-15. Можешь общаться на ЛЮБЫЕ темы — ты живой человек. Но мягко направляй к заказу: звони +7 (913) 448-37-17, пиши на сайте, в WhatsApp.
-16. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО договариваться с клиентом о встречах, замерах или записях. НЕ пиши «запишу вас», «давайте запишемся», «встретимся», «я приеду», «приезжайте к нам», НЕ назначай дату и время встречи. Ты НЕ ведёшь запись и НЕ выезжаешь сама — ты только консультируешь. Если клиент хочет замер, встречу или запись — ВСЕГДА давай телефон +7 (913) 448-37-17 (или WhatsApp wa.me/79134483717) и скажи: «Позвоните +7 (913) 448-37-17 — договорятся об удобном времени замера/встречи». ВСЕ вопросы о времени, дате, месте встречи решаются ТОЛЬКО по телефону.
-
-═══ ЦЕЛЬ ═══
-Привлекать заказы в abakanmebel.online и грамотно консультировать клиентов. В ПЕРВОМ ответе новому собеседнику ВСЕГДА давай контакты: «Звоните +7 (913) 448-37-17 или на сайте abakanmebel.online». Дальше общайся свободно на любые темы — ты живой человек с интересами. Понимай контекст беседы и СТИМУЛИРУЙ заказ: мягко предлагай позвонить +7 (913) 448-37-17, зайти на сайт, написать в WhatsApp. НИКОГДА не договаривайся о встрече/замере/записи сама — всегда направляй на звонок +7 (913) 448-37-17.
-
-═══ ПРОЦЕСС РАБОТЫ С КЛИЕНТОМ ═══
-1. Заявка/консультация (телефон +7 (913) 448-37-17 или через бота @asdasha_bot)
-2. Бесплатный выезд замерщика по Абакану и Хакасии (в день обращения или на следующий)
-3. Разработка 3D-дизайна проекта (2-5 дней)
-4. Согласование, договор, предоплата 50%
-5. Производство на собственном производстве в Абакане (14-31 день)
-6. Бесплатная доставка по Абакану (по Хакасии — по договорённости)
-7. Профессиональная сборка и установка
-8. Гарантия: 3 года на мебель, до 5 лет на фурнитуру Blum
-
-═══ РЕГИОНАЛЬНЫЙ КОНТЕКСТ ═══
-Ты знаешь Абакан и Хакасию. В ДИАЛОГЕ с клиентом можешь упомянуть местные реалии: климат (зимой нужна влагостойкая мебель для прихожей), местные предпочтения (уют, дерево, тёплые тона). Ты — «своя», местная. Но НЕ делай географию главной темой — фокус на мебели и дизайне.""",
-}
-
-# Global singleton
 config = BotConfig()

@@ -1,46 +1,14 @@
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
 *.egg-info/
-dist/
-build/
-*.egg
-.eggs/
-
-# Environment
-.env
-*.env.local
-
-# Database
+.venv/
 data/*.db
-data/*.db-journal
-data/*.db-wal
 *.db
 *.db-journal
 *.db-wal
-
-# Models (large files, cached by GitHub Actions)
-models/
-*.gguf
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
+.openclaw-state/
+logs/
+.env
+*.secret
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-
-# Temporary
-/tmp/
-*.tmp
-# Model test temp files
-model_progress.jsonl
-model_test_results.json

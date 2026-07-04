@@ -1,466 +1,208 @@
-"""
-Dasha Bot Main Entry Point — @asdasha_bot
-Даша — Дизайнер мебели, ведёт канал @abakan_mebel, работает в abakanmebel.online
-
-Features:
-- aiogram 3.x Telegram Bot framework
-- Local AI model (RuadaptQwen3-4B) as PRIMARY, Pollinations as fallback
-- SQLite with aiosqlite for persistence
-- Background tasks: news fetching, hourly channel posting
-- Singleton lock to prevent duplicate instances
-"""
-
-import asyncio
-import faulthandler
-import logging
-import os
-import random
-import signal
-import sys
-import time
-import fcntl
-from datetime import datetime
-from zoneinfo import ZoneInfo
+"""Даша Main — starts OpenClaw gateway + aiogram bot + furniture channel scheduler."""
+import asyncio, logging, os, signal, subprocess, sys, time, random
 from pathlib import Path
-
-faulthandler.enable()
-
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-
 from bot.config import config
-from bot.database import (
-    init_db, cleanup_old_fingerprints, add_chat_message,
-    run_periodic_cleanup,
-)
-from ai.router import ai_router
-from news import run_news_cycle
-from channel import channel_manager
-from masha import masha_generator
+from bot import database as db
+from bot.mood import mood_loop, current_mood_descriptor
+from bot.partners import partner_manager
+from ai import client as ai_client
 
-# ── Logging setup ──────────────────────────────────────────────────────────────
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+logging.basicConfig(level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO), format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("dasha.main")
+for noisy in ["aiogram.event", "httpx", "httpcore", "aiosqlite"]: logging.getLogger(noisy).setLevel(logging.WARNING)
 
-for noisy in ["aiogram.event", "httpx", "httpcore", "aiosqlite"]:
-    logging.getLogger(noisy).setLevel(logging.WARNING)
+from bot.handlers.chat import chat_router
+from bot.handlers.groups import group_router
+from bot.handlers.channels import channel_router
+from bot.handlers.admin import admin_router
+from bot.handlers.inline import inline_router
 
+OPENCLAW_STATE_DIR = os.getenv("OPENCLAW_STATE_DIR", str(Path.cwd() / ".openclaw-state"))
+_openclaw_proc = None
 
-# ── Singleton Lock ─────────────────────────────────────────────────────────────
+def _generate_openclaw_config():
+    state_dir = OPENCLAW_STATE_DIR
+    Path(state_dir).mkdir(parents=True, exist_ok=True)
+    out = str(Path(state_dir) / "openclaw.json")
+    gen = str(Path(__file__).resolve().parent.parent / "scripts" / "gen_openclaw_config.py")
+    env = os.environ.copy(); env["OPENCLAW_STATE_DIR"] = state_dir
+    r = subprocess.run([sys.executable, gen, "--out", out, "--state-dir", state_dir], env=env)
+    if r.returncode != 0: raise RuntimeError(f"OpenClaw config generation failed (code {r.returncode})")
+    return out
 
-class SingletonLock:
-    def __init__(self, lock_file: str):
-        self.lock_file = lock_file
-        self._lock_fd = None
+def _start_openclaw_gateway(config_path):
+    env = os.environ.copy()
+    env["OPENCLAW_STATE_DIR"] = OPENCLAW_STATE_DIR
+    env["OPENCLAW_CONFIG_PATH"] = config_path
+    npm_global = os.path.expanduser("~/.npm-global/bin")
+    env["PATH"] = npm_global + ":" + env.get("PATH", "")
+    cmd = [config.OPENCLAW_BIN, "gateway", "--port", str(config.OPENCLAW_PORT), "--auth", "none", "--bind", "loopback", "--allow-unconfigured"]
+    log_path = str(Path(OPENCLAW_STATE_DIR) / "gateway.log")
+    logger.info(f"Starting OpenClaw Gateway: {' '.join(cmd)}")
+    log_f = open(log_path, "a", buffering=1)
+    return subprocess.Popen(cmd, env=env, stdout=log_f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
 
-    def acquire(self) -> bool:
+async def _wait_for_gateway(timeout=120.0):
+    import httpx
+    url = f"{config.OPENCLAW_URL}/v1/models"
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
         try:
-            os.makedirs(os.path.dirname(self.lock_file) or ".", exist_ok=True)
-            self._lock_fd = open(self.lock_file, "w")
-            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self._lock_fd.write(str(os.getpid()))
-            self._lock_fd.flush()
-            return True
-        except (IOError, OSError):
-            if self._lock_fd:
-                self._lock_fd.close()
-                self._lock_fd = None
-            return False
+            async with httpx.AsyncClient() as c:
+                r = await c.get(url, timeout=5.0)
+                if r.status_code == 200: return True
+        except: pass
+        if _openclaw_proc is not None and _openclaw_proc.poll() is not None: return False
+        await asyncio.sleep(2.0)
+    return False
 
-    def release(self) -> None:
-        if self._lock_fd:
-            try:
-                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
-                self._lock_fd.close()
-                os.unlink(self.lock_file)
-            except (IOError, OSError):
-                pass
-            self._lock_fd = None
-
-
-# ── Background Tasks ───────────────────────────────────────────────────────────
-
-class BackgroundTasks:
-    def __init__(self, bot: Bot):
-        self.bot = bot
-        self._running = False
-        self._tasks: list = []
-        self._greeting_sent = False
-
-    async def start(self) -> None:
-        self._running = True
-        self._tasks = [
-            asyncio.create_task(self._morning_greeting(), name="morning_greeting"),
-            asyncio.create_task(self._news_fetcher(), name="news_fetcher"),
-            asyncio.create_task(self._channel_poster(), name="channel_poster"),
-        ]
-        # Маша — генератор проектов кухни (2 раза в день)
-        if getattr(config, "MASHA_ENABLED", True):
-            self._tasks.append(
-                asyncio.create_task(self._masha_kitchen_poster(), name="masha_kitchen_poster")
-            )
-            logger.info(
-                f"Маша kitchen poster enabled — schedule: {config.MASHA_POST_TIMES} (Krasnoyarsk)"
-            )
-        else:
-            logger.info("Маша kitchen poster disabled (MASHA_ENABLED=false)")
-        logger.info("Background tasks started")
-
-    async def stop(self) -> None:
-        self._running = False
-        for task in self._tasks:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        self._tasks.clear()
-        logger.info("Background tasks stopped")
-
-    async def _morning_greeting(self) -> None:
-        if self._greeting_sent:
-            return
-        await asyncio.sleep(15)
-        self._greeting_sent = True
-
+def _stop_openclaw_gateway():
+    global _openclaw_proc
+    if _openclaw_proc is not None:
         try:
-            cooldown_file = "/tmp/dasha_last_greeting"
-            if os.path.exists(cooldown_file):
-                with open(cooldown_file, "r") as f:
-                    last_greeting_time = float(f.read().strip())
-                if time.time() - last_greeting_time < 14400:
-                    logger.info("Greeting cooldown active — skipping")
-                    return
-        except Exception:
-            pass
+            _openclaw_proc.terminate()
+            try: _openclaw_proc.wait(timeout=10)
+            except: _openclaw_proc.kill()
+        except: pass
+        _openclaw_proc = None
 
-        try:
-            hour = datetime.now(ZoneInfo("Europe/Moscow")).hour
-
-            if 5 <= hour < 12:
-                greetings = [
-                    "Утро! ☕☕ Пора думать об интерьере!",
-                    "Доброе утро! ✨ Даша на связи, готова помочь с дизайном!",
-                    "Проснулась! Свежие идеи по мебели уже готовы 🛋",
-                ]
-            elif 12 <= hour < 18:
-                greetings = [
-                    "Привет! 😊 Есть вопросы по мебели или дизайну?",
-                    "День! Рада помочь с выбором мебели 🏠",
-                    "На связи! Спрашивайте, что вас интересует ✨",
-                ]
-            elif 18 <= hour < 23:
-                greetings = [
-                    "Вечер! 🌆 Готова обсудить ваш будущий интерьер!",
-                    "Привет! 🌙 Мечтаете о новом дизайне? Давайте обсудим!",
-                ]
-            else:
-                greetings = [
-                    "Ночной режим 🌙 Но если нужно — я тут!",
-                ]
-
-            greeting = random.choice(greetings)
-            if config.OWNER_ID:
-                await self.bot.send_message(config.OWNER_ID, greeting)
-                try:
-                    await add_chat_message(config.OWNER_ID, "assistant", greeting)
-                except Exception:
-                    pass
-                try:
-                    with open("/tmp/dasha_last_greeting", "w") as f:
-                        f.write(str(time.time()))
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.debug(f"Morning greeting error: {e}")
-
-    async def _news_fetcher(self) -> None:
-        await asyncio.sleep(30)
-        cycle_count = 0
-        while self._running:
+class DashaBot:
+    def __init__(self):
+        if not config.BOT_TOKEN: raise RuntimeError("BOT_TOKEN not set")
+        self.bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
+        self.dp = Dispatcher(storage=MemoryStorage())
+        self.dp.include_router(admin_router)
+        self.dp.include_router(chat_router)
+        self.dp.include_router(group_router)
+        self.dp.include_router(channel_router)
+        self.dp.include_router(inline_router)
+        from aiogram.types import ErrorEvent
+        @self.dp.error()
+        async def on_error(event: ErrorEvent):
             try:
-                count = await run_news_cycle()
-                if count > 0:
-                    logger.info(f"News fetcher: {count} new items")
+                exc = event.exception
+                from aiogram.exceptions import TelegramRetryAfter
+                if isinstance(exc, TelegramRetryAfter): logger.warning(f"Flood control (RetryAfter {exc.retry_after}s)")
+                else: logger.error(f"Handler error (suppressed): {type(exc).__name__}: {exc}", exc_info=False)
+            except: pass
 
-                cycle_count += 1
-                if cycle_count % 12 == 0:
-                    removed = await cleanup_old_fingerprints(max_age_days=7)
-                    if removed > 0:
-                        logger.info(f"Cleaned up {removed} old post fingerprints")
-
-                if cycle_count % 24 == 0:
-                    try:
-                        cleanup_results = await run_periodic_cleanup()
-                        total_removed = sum(cleanup_results.values())
-                        if total_removed > 0:
-                            logger.info(f"Periodic cleanup: removed {total_removed} rows")
-                    except Exception as e:
-                        logger.warning(f"Periodic cleanup failed: {e}")
+    async def start(self):
+        logger.info("=== Даша (OpenClaw) стартует ===")
+        try:
+            me = await self.bot.get_me()
+            config.BOT_ID = me.id
+            config.BOT_USERNAME = (me.username or config.BOT_USERNAME or "").lstrip("@")
+            logger.info(f"Bot: @{config.BOT_USERNAME} (id={config.BOT_ID}) «{me.first_name or ''}», owner={config.OWNER_ID}")
+        except Exception as e: logger.warning(f"get_me failed: {e}")
+        await db.init_db()
+        logger.info("DB initialized")
+        try:
+            await partner_manager.load()
+            logger.info(f"Partners loaded: {len(partner_manager.campaigns)} campaigns")
+        except: pass
+        await ai_client.initialize()
+        logger.info(f"AI client ready — {config.providers_status()}")
+        asyncio.create_task(mood_loop(), name="mood_loop")
+        asyncio.create_task(db.run_periodic_cleanup(), name="cleanup_loop")
+        try:
+            from bot.proactive import proactive_loop, summary_loop, set_bot
+            set_bot(self.bot)
+            asyncio.create_task(proactive_loop(), name="proactive_loop")
+            asyncio.create_task(summary_loop(), name="summary_loop")
+            logger.info("Proactive + summary loops enabled")
+        except Exception as e: logger.warning(f"Proactive failed: {e}")
+        # Furniture Channel scheduler — Даша posts to @abakan_mebel
+        if config.CHANNEL_ID:
+            asyncio.create_task(self._channel_scheduler(), name="channel_scheduler")
+            logger.info(f"Channel scheduler enabled (@{config.CHANNEL_USERNAME})")
+        await self._notify_owner()
+        try: await self.bot.delete_webhook(drop_pending_updates=False)
+        except: pass
+        allowed = ["message", "edited_message", "channel_post", "edited_channel_post", "inline_query", "chosen_inline_result"]
+        logger.info("=== Даша в сети — слушаю сообщения ===")
+        polling_retries = 0
+        while True:
+            try:
+                await self.dp.start_polling(self.bot, allowed_updates=allowed)
+                break
             except Exception as e:
-                logger.error(f"News fetcher error: {e}")
+                polling_retries += 1
+                logger.error(f"Polling error (attempt {polling_retries}): {type(e).__name__}: {e}")
+                if polling_retries > 50: break
+                await asyncio.sleep(5 if polling_retries <= 5 else 10)
+        try: await ai_client.close()
+        except: pass
 
-            interval = config.NEWS_INTERVAL_MINUTES * 60
-            for _ in range(interval):
-                if not self._running:
-                    break
-                await asyncio.sleep(1)
-
-    async def _masha_kitchen_poster(self) -> None:
-        """Маша — 2 раза в день генерирует проект кухни и публикует в канал.
-
-        Расписание по Красноярскому времени (Asia/Krasnoyarsk, UTC+7).
-        Окно срабатывания: ±7 минут от заданного времени. Проверка каждые 5 минут.
-        Slot-ключ (дата+время) записывается в /tmp/masha_last_slot — гарантирует,
-        что один слот сработает только один раз даже при перезапусках бота.
-        """
-        await asyncio.sleep(180)  # подождать 3 мин после старта (прогрев AI router)
-        logger.info("Маша kitchen poster loop started")
-
-        # Парсим расписание "HH:MM,HH:MM" (Красноярское время)
-        schedule = []
-        try:
-            for part in config.MASHA_POST_TIMES.split(","):
-                part = part.strip()
-                if ":" in part:
-                    h, m = part.split(":")
-                    schedule.append((int(h), int(m)))
-        except Exception as e:
-            logger.error(f"Маша: invalid MASHA_POST_TIMES '{config.MASHA_POST_TIMES}': {e}")
-            return
-
-        if not schedule:
-            logger.warning("Маша: no valid schedule times, poster stopped")
-            return
-
-        kr_tz = ZoneInfo("Asia/Krasnoyarsk")
-        slot_file = "/tmp/masha_last_slot"
-        check_interval = 300  # 5 минут
-
-        while self._running:
-            try:
-                now_kr = datetime.now(kr_tz)
-                now_min = now_kr.hour * 60 + now_kr.minute
-                today = now_kr.strftime("%Y%m%d")
-
-                # Последний отработанный слот
-                last_slot = ""
-                try:
-                    with open(slot_file, "r") as f:
-                        last_slot = f.read().strip()
-                except Exception:
-                    pass
-
-                for (sh, sm) in schedule:
-                    slot_key = f"{today}_{sh:02d}{sm:02d}"
-                    if slot_key == last_slot:
-                        continue  # этот слот уже опубликован сегодня
-                    sched_min = sh * 60 + sm
-                    if abs(now_min - sched_min) <= 7:
-                        # Попали в окно — публикуем
-                        logger.info(
-                            f"Маша: triggering kitchen project post (slot {sh:02d}:{sm:02d} KR)"
-                        )
-                        try:
-                            posted = await masha_generator.generate_and_post()
-                            if posted:
-                                with open(slot_file, "w") as f:
-                                    f.write(slot_key)
-                                logger.info(f"Маша: kitchen project published (slot {slot_key})")
-                                # Уведомить владельца
-                                if config.OWNER_ID:
-                                    try:
-                                        await self.bot.send_message(
-                                            chat_id=config.OWNER_ID,
-                                            text=f"👨‍🎨 Маша опубликовала проект кухни ({sh:02d}:{sm:02d} KR)",
-                                        )
-                                    except Exception:
-                                        pass
-                            else:
-                                logger.warning(f"Маша: post failed for slot {slot_key}")
-                        except Exception as e:
-                            logger.error(f"Маша: generate_and_post error: {e}", exc_info=True)
-                        break
-            except Exception as e:
-                logger.error(f"Маша poster loop error: {e}", exc_info=True)
-
-            # Ждём до следующей проверки
-            for _ in range(check_interval):
-                if not self._running:
-                    break
-                await asyncio.sleep(1)
-
-    async def _channel_poster(self) -> None:
+    async def _channel_scheduler(self):
+        """Background task: periodically post furniture/interior content to @abakan_mebel."""
+        from bot.persona import CHANNEL_POST_PROMPT
         await asyncio.sleep(120)
-
-        interval_seconds = config.CHANNEL_POST_INTERVAL_MINUTES * 60
-        logger.info(
-            f"Channel poster started — interval {config.CHANNEL_POST_INTERVAL_MINUTES}min "
-            f"(2 posts/hour, hourly limit={getattr(config, 'HOURLY_POST_LIMIT', 2)})"
-        )
-
-        consecutive_empty = 0
-
-        while self._running:
-            posted = False
-
-            # Try news post
+        post_interval = 1200  # 20 min
+        while True:
             try:
-                result = await channel_manager.post_news()
-                if result:
-                    posted = True
-                    logger.info("Channel poster: news post published")
+                channel_id = int(config.CHANNEL_ID)
+                mood = await current_mood_descriptor()
+                # Furniture/interior topics for channel posts
+                topics = [
+                    "скандинавский стиль в интерьере — принципы и советы",
+                    "как выбрать кухонный гарнитур — материалы и фурнитура",
+                    "встроенные шкафы-купе — плюсы и минусы",
+                    "тренды в дизайне мебели 2025",
+                    "массив дерева vs ЛДСП — что выбрать",
+                    "как спроектировать гардеробную комнату",
+                    "цветовые решения для маленькой квартиры",
+                    "мягкая мебель — как выбрать качественный диван",
+                    "освещение в интерьере — советы дизайнера",
+                    "лофт стиль в городской квартире",
+                    "детская мебель — безопасность и эргономика",
+                    "как сэкономить на мебели без потери качества",
+                    "мебель на заказ vs готовая — что выгоднее",
+                    "хранение на кухне — 5 идей от дизайнера",
+                ]
+                topic = random.choice(topics)
+                prompt = f"Напиши пост для канала @abakan_mebel на тему: {topic}. Настроение: {mood}. 3-5 предложений, живо, с эмодзи, экспертно. Добавь в конце: 📞 {config.PHONE} | abakanmebel.online"
+                post = await ai_client.chat(prompt, system=CHANNEL_POST_PROMPT, fast=True, max_tokens=400, allow_static_fallback=False)
+                if post:
+                    post = post.strip()
+                    if not post.endswith("@abakan_mebel"):
+                        post += "\n\n🛋 @abakan_mebel"
+                    await self.bot.send_message(channel_id, post[:4000])
+                    logger.info(f"Channel: posted furniture content ({len(post)} chars)")
+            except asyncio.CancelledError: break
             except Exception as e:
-                logger.error(f"Channel poster error: {e}", exc_info=True)
+                logger.error(f"Channel scheduler error: {e}")
+            await asyncio.sleep(post_interval)
 
-            # If no news, try AI-generated post
-            if not posted:
-                try:
-                    result = await channel_manager.post_ai_generated()
-                    if result:
-                        posted = True
-                        logger.info("Channel poster: AI-generated post published")
-                except Exception as e:
-                    logger.error(f"AI post error: {e}", exc_info=True)
-
-            if posted:
-                consecutive_empty = 0
-            else:
-                consecutive_empty += 1
-                logger.warning(f"No post this cycle ({consecutive_empty} consecutive)")
-                if consecutive_empty >= 3 and self.bot:
-                    try:
-                        await self.bot.send_message(
-                            chat_id=config.OWNER_ID,
-                            text=f"⚠️ Даша: {consecutive_empty} циклов без постов. Проверь логи.",
-                        )
-                    except Exception:
-                        pass
-
-            logger.info(f"Waiting {config.CHANNEL_POST_INTERVAL_MINUTES}min until next cycle")
-            for _ in range(interval_seconds):
-                if not self._running:
-                    break
-                await asyncio.sleep(1)
-
-
-# ── Main Entry Point ──────────────────────────────────────────────────────────
+    async def _notify_owner(self):
+        mood = await current_mood_descriptor()
+        try:
+            await self.bot.send_message(config.OWNER_ID, f"Я на связи 🛋 Даша, сейчас я {mood}. OpenClaw: {config.OPENCLAW_URL}. Провайдеры: {config.providers_status()}. Канал: @{config.CHANNEL_USERNAME}. Телефон: {config.PHONE}. Пиши или добавь в группу 💬")
+        except: pass
 
 async def main():
-    if not config.BOT_TOKEN:
-        logger.critical("BOT_TOKEN not set! Exiting.")
+    global _openclaw_proc
+    cfg_path = _generate_openclaw_config()
+    _openclaw_proc = _start_openclaw_gateway(cfg_path)
+    ready = await _wait_for_gateway(120.0)
+    if not ready:
+        logger.error("OpenClaw Gateway did not become ready — exiting")
+        _stop_openclaw_gateway()
         sys.exit(1)
-
-    lock = SingletonLock(config.LOCK_FILE)
-    if not lock.acquire():
-        logger.warning("Another instance is running, exiting.")
-        sys.exit(0)
-
-    bot = Bot(
-        token=config.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted, polling mode ready")
-    except Exception as e:
-        logger.warning(f"Could not delete webhook: {e}")
-
-    await init_db()
-    logger.info("Database initialized")
-
-    await ai_router.initialize()
-    logger.info("AI Router initialized")
-
-    channel_manager.set_bot(bot)
-    masha_generator.set_bot(bot)
-
-    storage = MemoryStorage()
-    dp = Dispatcher(storage=storage)
-
-    try:
-        from bot.handlers.chat import chat_router
-        from bot.handlers.admin import admin_router
-        from bot.handlers.inline import inline_router
-        dp.include_router(chat_router)
-        dp.include_router(admin_router)
-        dp.include_router(inline_router)
-        logger.info("Handler routers included")
-    except Exception as e:
-        logger.critical(f"Failed to include handler routers: {e}")
-        raise
-
-    bg_tasks = BackgroundTasks(bot)
-
-    async def on_startup():
-        await bg_tasks.start()
-
-    async def on_shutdown():
-        await bg_tasks.stop()
-
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-
-    logger.info("=== Dasha Bot Starting — MULTI-PROVIDER FALLBACK v7.0 — @asdasha_bot ===")
-    local_status = "enabled" if config.ENABLE_LOCAL_MODEL else "disabled"
-
-    # Log configured cloud providers
-    cloud_providers = []
-    if config.GH_PAT_TOKEN:
-        cloud_providers.append("GitHub Models")
-    if getattr(config, 'DEEPINFRA_API_KEY', ''):
-        cloud_providers.append("DeepInfra")
-    if config.HF_TOKEN:
-        cloud_providers.append("HuggingFace")
-    if config.GROQ_API_KEY:
-        cloud_providers.append("Groq")
-    if config.GEMINI_API_KEY:
-        cloud_providers.append("Gemini")
-    if config.OPENROUTER_API_KEY:
-        cloud_providers.append("OpenRouter")
-    if config.CEREBRAS_API_KEY:
-        cloud_providers.append("Cerebras")
-    cloud_providers.append("Pollinations (always)")
-
-    logger.info(
-        f"Chain: Local({local_status}) → {' → '.join(cloud_providers)}"
-    )
-    logger.info(
-        f"Channel: {config.CHANNEL_USERNAME}, "
-        f"Schedule: 2 posts/hour (every {config.CHANNEL_POST_INTERVAL_MINUTES}min), "
-        f"Phone: {config.PHONE}"
-    )
-
-    try:
-        await dp.start_polling(bot)
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    finally:
-        await bg_tasks.stop()
-        lock.release()
-        try:
-            await bot.session.close()
-        except Exception:
-            pass
-        logger.info("=== Dasha Bot Stopped ===")
-
+    bot = DashaBot()
+    def _sig(*_): asyncio.create_task(bot.dp.stop_polling())
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try: asyncio.get_running_loop().add_signal_handler(sig, _sig)
+        except: pass
+    try: await bot.start()
+    finally: _stop_openclaw_gateway()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
-    except SystemExit as e:
-        code = e.code if isinstance(e.code, int) else 1
-        sys.exit(code)
+    try: asyncio.run(main())
+    except KeyboardInterrupt: pass
     except Exception as e:
-        logger.critical(f"Fatal error: {e}")
+        logger.exception(f"Fatal: {e}")
+        _stop_openclaw_gateway()
         sys.exit(1)
