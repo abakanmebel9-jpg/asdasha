@@ -149,6 +149,7 @@ class DashaBot:
         Posts 1 item per cycle. HTML parse mode for clickable footer with phone/site.
         """
         from bot.persona import CHANNEL_POST_PROMPT
+        from bot.post_utils import topic_fingerprint
         from aiogram.enums import ParseMode
         await asyncio.sleep(120)
         post_interval = 1800  # 30 min (restored to pre-OpenClaw schedule)
