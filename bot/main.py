@@ -177,15 +177,18 @@ class DashaBot:
 
                 logger.info(f"Fetched {len(all_items)} furniture news items")
 
-                # 2. Find unposted news (by news_id AND URL dedup)
+                # 2. Find unposted news (by news_id AND URL AND title fingerprint dedup)
                 news_item = None
                 for item in all_items:
                     news_id = item.get("id", "")
                     item_url = item.get("url", "")
-                    # Check both news_id and URL
+                    title = item.get("title", "")
                     if news_id and await db.is_news_posted(news_id):
                         continue
                     if item_url and await db.is_news_posted(url_normalize(item_url)):
+                        continue
+                    tf = title_fingerprint(title)
+                    if tf and await db.is_news_posted(f"tf:{tf}"):
                         continue
                     news_item = item
                     break
@@ -293,7 +296,7 @@ class DashaBot:
 
         # Text fingerprint dedup
         fp = text_fingerprint(ai_text)
-        if await db.is_news_posted(fp):
+        if await db.is_news_posted(f"fp:{fp}"):
             logger.info(f"Text fingerprint already posted — skip: {fp[:16]}")
             return False
 
@@ -357,13 +360,16 @@ class DashaBot:
                 except Exception as e2:
                     logger.error(f"Channel post failed (plain): {e2}")
 
-        # Mark as posted (news_id + URL + text fingerprint)
+        # Mark as posted (news_id + URL + title fingerprint + text fingerprint)
         if posted:
             if news_id:
                 await db.mark_news_posted(news_id, title)
             if url:
                 await db.mark_news_posted(url_normalize(url), title)
-            await db.mark_news_posted(fp, title)
+            tf = title_fingerprint(title)
+            if tf:
+                await db.mark_news_posted(f"tf:{tf}", title)
+            await db.mark_news_posted(f"fp:{fp}", title)
         return posted
 
     async def _build_media_group(self, image_urls, caption_full):
