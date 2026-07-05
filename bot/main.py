@@ -1,5 +1,5 @@
 """Даша Main — starts OpenClaw gateway + aiogram bot + furniture channel scheduler."""
-import asyncio, logging, os, signal, subprocess, sys, time, random
+import asyncio, logging, os, re, signal, subprocess, sys, time, random
 from pathlib import Path
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -9,6 +9,12 @@ from bot import database as db
 from bot.mood import mood_loop, current_mood_descriptor
 from bot.partners import partner_manager
 from ai import client as ai_client
+from bot.post_utils import (
+    smart_truncate, smart_truncate_html, clean_post_text, validate_post_text,
+    enforce_no_meetings, validate_image, title_fingerprint,
+    text_fingerprint, url_normalize, date_context, UNIQUIFICATION_RULES,
+)
+from bot.text_polish import polish_grammar, linkify_contacts, dedupe_contacts
 
 logging.basicConfig(level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO), format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("dasha.main")
@@ -137,13 +143,15 @@ class DashaBot:
         except: pass
 
     async def _channel_scheduler(self):
-        """Background task: post furniture news from furniture-news.json to @abakan_mebel.
-        Fetches from abakanmebel9-jpg/par repo (self-updating source), extracts photos,
-        generates AI commentary, posts with photo to channel.
+        """Background task: post furniture news to @abakan_mebel every 30 min.
+
+        Full pipeline: fetch → dedup → AI generate → clean → polish → validate → smart truncate → post.
+        Posts 1 item per cycle. HTML parse mode for clickable footer with phone/site.
         """
         from bot.persona import CHANNEL_POST_PROMPT
+        from aiogram.enums import ParseMode
         await asyncio.sleep(120)
-        post_interval = 3600  # 60 min (old schedule: CHANNEL_POST_INTERVAL_MINUTES=60)
+        post_interval = 1800  # 30 min (restored to pre-OpenClaw schedule)
         NEWS_URL = "https://raw.githubusercontent.com/abakanmebel9-jpg/par/main/data/furniture-news.json"
 
         while True:
@@ -169,102 +177,36 @@ class DashaBot:
 
                 logger.info(f"Fetched {len(all_items)} furniture news items")
 
-                # 2. Find unposted news item
+                # 2. Find unposted news (by news_id AND URL dedup)
                 news_item = None
                 for item in all_items:
                     news_id = item.get("id", "")
-                    if news_id and not await db.is_news_posted(news_id):
-                        news_item = item
-                        break
+                    item_url = item.get("url", "")
+                    # Check both news_id and URL
+                    if news_id and await db.is_news_posted(news_id):
+                        continue
+                    if item_url and await db.is_news_posted(url_normalize(item_url)):
+                        continue
+                    news_item = item
+                    break
 
                 if not news_item:
-                    # All items posted — reset
-                    logger.info("All furniture news already posted — resetting posted_news")
-                    try:
-                        conn = db._conn()
-                        await conn.execute("DELETE FROM posted_news")
-                        await conn.commit()
-                    except: pass
-                    news_item = all_items[0]
+                    # All posted — pick random by URL dedup (NO destructive reset)
+                    logger.info("All furniture news posted — trying URL dedup fallback")
+                    import random as _rng
+                    for item in all_items:
+                        item_url = item.get("url", "")
+                        if item_url and not await db.is_news_posted(url_normalize(item_url)):
+                            news_item = item
+                            break
+                    if not news_item:
+                        news_item = _rng.choice(all_items)
+                        logger.info(f"URL dedup exhausted — picked random item for AI uniquification")
 
-                title = news_item.get("title", "")
-                summary = news_item.get("summary", "")
-                url = news_item.get("url", "")
-                image_url = news_item.get("image", "")
-                images_list = news_item.get("images", []) or []
-                # Use up to 10 images (Telegram media group limit)
-                all_images = list(dict.fromkeys([image_url] + images_list))[:10] if image_url else images_list[:10]
-                all_images = [u for u in all_images if u][:10]
-                source = news_item.get("source", "")
-                news_id = news_item.get("id", "")
-
-                logger.info(f"Selected furniture news: {title[:60]} (img: {'yes' if image_url else 'no'})")
-
-                # 3. Generate AI commentary — match old format: 500-1000 chars, furniture expert
-                prompt = (
-                    f"Напиши пост для канала @abakan_mebel с комментарием на эту новость о мебели/интерьере.\n\n"
-                    f"Заголовок новости: {title}\n"
-                    f"Краткое содержание: {summary[:400]}\n\n"
-                    f"СТИЛЬ (как раньше писала Даша):\n"
-                    f"- 800-1050 символов, живой экспертный разбор от первого лица\n"
-                    f"- Даша — дизайнер мебели из Абакана: 'Как дизайнер, я всегда...'\n"
-                    f"- Материалы: массив, ЛДСП, МДФ, керамогранит, стекло\n"
-                    f"- Стили: скандинавский, лофт, минимализм, прованс\n"
-                    f"- Личный опыт: 'В моих проектах...', 'Я всегда задумываюсь...'\n"
-                    f"- Эмодзи: \U0001f6cb\u2728\U0001f3e8\U0001f3a8\U0001f4d0\U0001fab5\U0001f525 естественно\n"
-                    f"- Женский род, по-русски\n"
-                    f"- Настроение: {mood}\n"
-                    f"- НЕ копируй новость — пиши СВОЙ комментарий\n"
-                    f"- НЕ добавляй ссылки, НЕ пиши 'Источник'\n"
-                    f"- НЕ начинай с 'Даша:'"
-                )
-                ai_commentary = await ai_client.chat(
-                    prompt, system=CHANNEL_POST_PROMPT,
-                    max_tokens=800, temperature=0.9, allow_static_fallback=False
-                )
-
-                if not ai_commentary:
-                    logger.warning("AI commentary empty — skipping post")
-                    await asyncio.sleep(post_interval)
-                    continue
-
-                # 4. Build post text — match old format: AI text + footer
-                post_text = ai_commentary.strip()[:3000]
-                # Footer matches old @abakan_mebel format exactly:
-                # 📞 +7 (913) 448-37-17 | abakanmebel.online\n🛋 @abakan_mebel
-                if not post_text.endswith("@abakan_mebel"):
-                    post_text += f"\n\n📞 {config.PHONE} | abakanmebel.online\n🛋 @abakan_mebel"
-
-                # 5. Download image and post with photo
-                posted = False
-                if image_url:
-                    try:
-                        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as img_client:
-                            img_resp = await img_client.get(image_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-                        if img_resp.status_code == 200 and len(img_resp.content) > 2000:
-                            from aiogram.types import BufferedInputFile
-                            photo_file = BufferedInputFile(img_resp.content, filename="news.jpg")
-                            caption = post_text[:1024]
-                            await self.bot.send_photo(channel_id, photo_file, caption=caption)
-                            posted = True
-                            logger.info(f"Channel: posted NEWS+photo ({len(post_text)} chars) — {title[:40]}")
-                        else:
-                            logger.warning(f"Image download bad: HTTP {img_resp.status_code}, {len(img_resp.content)} bytes")
-                    except Exception as e:
-                        logger.warning(f"Image download failed: {e}")
-
-                # 6. Fallback: post text only
-                if not posted:
-                    try:
-                        await self.bot.send_message(channel_id, post_text[:4096])
-                        posted = True
-                        logger.info(f"Channel: posted NEWS text-only ({len(post_text)} chars) — {title[:40]}")
-                    except Exception as e:
-                        logger.error(f"Channel post failed: {e}")
-
-                # 7. Mark news as posted
-                if posted and news_id:
-                    await db.mark_news_posted(news_id, title)
+                # 3. Post the item
+                posted = await self._post_news_item(news_item, mood, channel_id, CHANNEL_POST_PROMPT)
+                if posted:
+                    logger.info(f"Cycle: posted furniture news — {news_item.get('title','')[:40]}")
 
             except asyncio.CancelledError:
                 break
@@ -273,6 +215,180 @@ class DashaBot:
 
             await asyncio.sleep(post_interval)
 
+    async def _post_news_item(self, news_item, mood, channel_id, channel_prompt):
+        """Post a single furniture news item. Returns True if posted.
+
+        Full pipeline: AI generate → clean → polish (Russian typography) → validate →
+        smart truncate (HTML-safe) → post with photo/media_group/text.
+        Uses HTML parse mode for clickable footer (phone + website links).
+        """
+        import httpx
+        from aiogram.enums import ParseMode
+        from bot.post_utils import (smart_truncate, smart_truncate_html, clean_post_text,
+            validate_post_text, enforce_no_meetings, validate_image, text_fingerprint,
+            url_normalize, date_context, UNIQUIFICATION_RULES)
+        from bot.text_polish import polish_grammar, linkify_contacts
+
+        title = news_item.get("title", "")
+        summary = news_item.get("summary", "")
+        url = news_item.get("url", "")
+        image_url = news_item.get("image", "")
+        images_list = news_item.get("images", []) or []
+        all_images = list(dict.fromkeys([image_url] + images_list)) if image_url else list(images_list)
+        all_images = [u for u in all_images if u][:10]
+        news_id = news_item.get("id", "")
+        phone = getattr(config, 'PHONE', '+7 (913) 448-37-17')
+
+        # URL dedup
+        if url:
+            url_key = url_normalize(url)
+            if url_key and await db.is_news_posted(url_key):
+                logger.info(f"URL already posted — skip: {url_key[:50]}")
+                return False
+
+        logger.info(f"Selected furniture news: {title[:60]} (imgs: {len(all_images)})")
+
+        # Generate AI commentary (NO translation — furniture news is already in Russian)
+        prompt = (
+            f"Напиши пост для канала @abakan_mebel с комментарием на эту новость о мебели/интерьере.\n\n"
+            f"Контекст: {date_context()}, настроение: {mood}\n\n"
+            f"Заголовок новости: {title}\n"
+            f"Краткое содержание: {summary[:500]}\n"
+            f"\n{UNIQUIFICATION_RULES}\n\n"
+            f"СТИЛЬ (как раньше писала Даша):\n"
+            f"- 800-1050 символов, живой экспертный разбор от первого лица\n"
+            f"- Даша — дизайнер мебели из Абакана: 'Как дизайнер, я всегда...'\n"
+            f"- Материалы: массив, ЛДСП, МДФ, керамогранит, стекло\n"
+            f"- Стили: скандинавский, лофт, минимализм, прованс\n"
+            f"- Личный опыт: 'В моих проектах...', 'Я всегда задумываюсь...'\n"
+            f"- Эмодзи: \U0001f6cb\u2728\U0001f3e8\U0001f3a8\U0001f4d0\U0001fab5\U0001f525 естественно\n"
+            f"- Женский род, по-русски, БЕЗ грамматических ошибок\n"
+            f"- НЕ добавляй ссылки, НЕ пиши 'Источник'\n"
+            f"- НЕ начинай с 'Даша:'\n"
+            f"- НЕ предлагай звонки/встречи/записи (это добавит редакция отдельно)"
+        )
+        ai_commentary = await ai_client.chat(
+            prompt, system=channel_prompt,
+            max_tokens=800, temperature=0.9, allow_static_fallback=False
+        )
+
+        if not ai_commentary:
+            logger.warning("AI commentary empty — skipping post")
+            return False
+
+        # Clean AI output
+        ai_text = clean_post_text(ai_commentary, "Даша")
+
+        # Safety: remove meeting/booking proposals
+        ai_text = enforce_no_meetings(ai_text)
+
+        # Russian typography polish
+        ai_text = polish_grammar(ai_text)
+
+        # Validate (politics/NSFW/furniture-relevance)
+        is_valid, reason = validate_post_text(ai_text)
+        if not is_valid:
+            logger.warning(f"Post validation FAILED ({reason}) — skipping: {title[:40]}")
+            return False
+
+        # Text fingerprint dedup
+        fp = text_fingerprint(ai_text)
+        if await db.is_news_posted(fp):
+            logger.info(f"Text fingerprint already posted — skip: {fp[:16]}")
+            return False
+
+        # HTML footer with clickable links
+        tel_digits = phone.replace(" ", "").replace("(", "").replace(")", "").replace("-", "")
+        FOOTER = (
+            f'\n\nАвтор <a href="https://t.me/asdasha_bot">@asdasha_bot</a> Кухни на заказ '
+            f'📞 <a href="tel:{tel_digits}">{phone}</a> '
+            f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
+        )
+
+        # Smart truncate (HTML-safe, reserves footer space)
+        caption_body = smart_truncate_html(ai_text, 1024, len(FOOTER))
+        text_body = smart_truncate_html(ai_text, 4096, len(FOOTER))
+        caption_full = caption_body + FOOTER
+        text_full = text_body + FOOTER
+
+        posted = False
+
+        # Case A: 2+ images → send_media_group
+        if len(all_images) >= 2:
+            try:
+                media_group = await self._build_media_group(all_images, caption_full)
+                if media_group:
+                    await self.bot.send_media_group(channel_id, media_group)
+                    posted = True
+                    logger.info(f"Channel: posted NEWS media_group ({len(media_group)} photos) — {title[:40]}")
+            except Exception as e:
+                logger.warning(f"send_media_group failed: {e}")
+
+        # Case B: exactly 1 image → send_photo
+        if not posted and len(all_images) == 1:
+            try:
+                async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as img_client:
+                    img_resp = await img_client.get(all_images[0], headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+                if img_resp.status_code == 200 and validate_image(img_resp.content):
+                    from aiogram.types import BufferedInputFile
+                    photo_file = BufferedInputFile(img_resp.content, filename="news.jpg")
+                    await self.bot.send_photo(channel_id, photo_file, caption=caption_full[:1024], parse_mode=ParseMode.HTML)
+                    posted = True
+                    logger.info(f"Channel: posted NEWS+photo (caption {len(caption_full[:1024])}) — {title[:40]}")
+                else:
+                    logger.warning(f"Image validation failed: HTTP {img_resp.status_code}, {len(img_resp.content)} bytes")
+            except Exception as e:
+                logger.warning(f"Image download failed: {e}")
+
+        # Case C: no image → send_message (HTML)
+        if not posted:
+            try:
+                await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
+                posted = True
+                logger.info(f"Channel: posted NEWS text-only ({len(text_full[:4096])} chars) — {title[:40]}")
+            except Exception as e:
+                logger.error(f"Channel post failed (HTML): {e}")
+                # Fallback: plain text (strip HTML tags)
+                try:
+                    plain = re.sub(r'<[^>]+>', '', text_full)[:4096]
+                    await self.bot.send_message(channel_id, plain)
+                    posted = True
+                    logger.info(f"Channel: posted NEWS text-only PLAIN fallback — {title[:40]}")
+                except Exception as e2:
+                    logger.error(f"Channel post failed (plain): {e2}")
+
+        # Mark as posted (news_id + URL + text fingerprint)
+        if posted:
+            if news_id:
+                await db.mark_news_posted(news_id, title)
+            if url:
+                await db.mark_news_posted(url_normalize(url), title)
+            await db.mark_news_posted(fp, title)
+        return posted
+
+    async def _build_media_group(self, image_urls, caption_full):
+        """Download up to 10 images and build a media group (caption on first).
+        Validates each image by magic bytes. Uses HTML parse mode for caption."""
+        import httpx
+        from aiogram.types import InputMediaPhoto, BufferedInputFile
+        from aiogram.enums import ParseMode
+        from bot.post_utils import validate_image
+        media = []
+        first = True
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            for url in image_urls[:10]:
+                try:
+                    r = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+                    if r.status_code == 200 and validate_image(r.content):
+                        buf = BufferedInputFile(r.content, filename="news.jpg")
+                        if first:
+                            media.append(InputMediaPhoto(media=buf, caption=caption_full[:1024], parse_mode=ParseMode.HTML))
+                            first = False
+                        else:
+                            media.append(InputMediaPhoto(media=buf))
+                except Exception as e:
+                    logger.warning(f"media group img fetch failed ({url[:50]}): {e}")
+        return media
     async def _notify_owner(self):
         mood = await current_mood_descriptor()
         try:
