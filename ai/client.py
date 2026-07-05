@@ -79,26 +79,37 @@ async def _call_openclaw(messages, max_tokens, temperature, timeout=25.0):
             return ""
     return ""
 
-async def _call_pollinations_direct(messages, max_tokens, timeout=30.0):
+async def _call_pollinations_direct(messages, max_tokens, timeout=30.0, retries=2):
     if _client is None: await initialize()
-    payload = {"model": _POLLINATIONS_MODEL, "messages": messages, "temperature": 0.9, "max_tokens": max_tokens, "stream": False, "referrer": "asdasha-bot"}
+    payload = {"model": _POLLINATIONS_MODEL, "messages": messages, "temperature": 0.9, "max_tokens": max_tokens, "stream": False, "referrer": "dasha-bot"}
     sem = _get_pollinations_sem()
-    try:
-        async with sem:
-            r = await _client.post(_POLLINATIONS_URL, json=payload, timeout=timeout)
-        if r.status_code == 200:
-            data = r.json()
-            choices = data.get("choices") or []
-            if choices:
-                msg = choices[0].get("message", {}) or {}
-                content = (msg.get("content", "") or "").strip()
-                if content: return content
-                reasoning = (msg.get("reasoning", "") or "").strip()
-                if reasoning:
-                    parts = reasoning.split(".")
-                    return ".".join(parts[-3:]).strip()[:500]
-        return ""
-    except: return ""
+    for attempt in range(retries + 1):
+        try:
+            t_start = time.time()
+            async with sem:
+                r = await _client.post(_POLLINATIONS_URL, json=payload, timeout=timeout)
+            elapsed = time.time() - t_start
+            if r.status_code == 200:
+                data = r.json()
+                choices = data.get("choices") or []
+                if choices:
+                    msg = choices[0].get("message", {}) or {}
+                    content = (msg.get("content", "") or "").strip()
+                    if content: return content
+                    reasoning = (msg.get("reasoning", "") or "").strip()
+                    if reasoning:
+                        parts = reasoning.split(".")
+                        return ".".join(parts[-3:]).strip()[:500]
+            if elapsed < 5.0 and attempt < retries:
+                await asyncio.sleep(2.0)
+                continue
+            return ""
+        except:
+            if attempt < retries:
+                await asyncio.sleep(2.0)
+                continue
+            return ""
+    return ""
 
 async def _call_pollinations_get(prompt, timeout=12.0):
     if _client is None: await initialize()
