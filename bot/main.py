@@ -143,7 +143,7 @@ class DashaBot:
         """
         from bot.persona import CHANNEL_POST_PROMPT
         await asyncio.sleep(120)
-        post_interval = 1200  # 20 min
+        post_interval = 3600  # 60 min (old schedule: CHANNEL_POST_INTERVAL_MINUTES=60)
         NEWS_URL = "https://raw.githubusercontent.com/abakanmebel9-jpg/par/main/data/furniture-news.json"
 
         while True:
