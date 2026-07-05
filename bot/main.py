@@ -178,8 +178,8 @@ class DashaBot:
 
                 logger.info(f"Fetched {len(all_items)} furniture news items")
 
-                # 2. Find unposted news (by news_id AND URL AND title fingerprint dedup)
-                news_item = None
+                # 2. Find up to 4 candidate news items (retry if AI empty/validation fail)
+                candidates = []
                 for item in all_items:
                     news_id = item.get("id", "")
                     item_url = item.get("url", "")
@@ -191,31 +191,33 @@ class DashaBot:
                     tf = title_fingerprint(title)
                     if tf and await db.is_news_posted(f"tf:{tf}"):
                         continue
-                    # Topic fingerprint dedup (catches different articles about same event)
                     topic = topic_fingerprint(title, item.get("summary", ""))
                     if topic and len(topic.split()) >= 2 and await db.is_news_posted(f"topic:{topic}"):
                         logger.info(f"Topic already posted — skip: {topic[:40]}")
                         continue
-                    news_item = item
-                    break
+                    candidates.append(item)
+                    if len(candidates) >= 4:
+                        break
 
-                if not news_item:
-                    # All posted — pick random by URL dedup (NO destructive reset)
-                    logger.info("All furniture news posted — trying URL dedup fallback")
+                if not candidates:
+                    logger.info("All furniture news posted — picking random for AI uniquification")
                     import random as _rng
-                    for item in all_items:
-                        item_url = item.get("url", "")
-                        if item_url and not await db.is_news_posted(url_normalize(item_url)):
-                            news_item = item
-                            break
-                    if not news_item:
-                        news_item = _rng.choice(all_items)
-                        logger.info(f"URL dedup exhausted — picked random item for AI uniquification")
+                    candidates = _rng.sample(all_items, min(2, len(all_items)))
 
-                # 3. Post the item
-                posted = await self._post_news_item(news_item, mood, channel_id, CHANNEL_POST_PROMPT)
-                if posted:
-                    logger.info(f"Cycle: posted furniture news — {news_item.get('title','')[:40]}")
+                # 3. Try candidates until we post 1 (or exhaust candidates)
+                posted = False
+                for news_item in candidates:
+                    try:
+                        posted = await self._post_news_item(news_item, mood, channel_id, CHANNEL_POST_PROMPT)
+                        if posted:
+                            logger.info(f"Cycle: posted furniture news — {news_item.get('title','')[:40]}")
+                            break
+                        else:
+                            logger.info(f"News skipped (AI empty or validation) — trying next candidate")
+                    except Exception as e:
+                        logger.error(f"Post news item error: {e}")
+                if not posted:
+                    logger.info(f"Cycle complete: no posts from {len(candidates)} candidates")
 
             except asyncio.CancelledError:
                 break
@@ -282,7 +284,12 @@ class DashaBot:
         )
 
         if not ai_commentary:
-            logger.warning("AI commentary empty — skipping post")
+            logger.warning("AI commentary empty — marking news as skipped to try next")
+            # Mark as posted so scheduler moves to next news (avoid infinite loop)
+            if news_id:
+                await db.mark_news_posted(news_id, title)
+            if url:
+                await db.mark_news_posted(url_normalize(url), title)
             return False
 
         # Clean AI output
@@ -297,7 +304,12 @@ class DashaBot:
         # Validate (politics/NSFW/furniture-relevance)
         is_valid, reason = validate_post_text(ai_text)
         if not is_valid:
-            logger.warning(f"Post validation FAILED ({reason}) — skipping: {title[:40]}")
+            logger.warning(f"Post validation FAILED ({reason}) — marking as skipped: {title[:40]}")
+            # Mark as posted so scheduler moves to next news
+            if news_id:
+                await db.mark_news_posted(news_id, title)
+            if url:
+                await db.mark_news_posted(url_normalize(url), title)
             return False
 
         # Text fingerprint dedup
