@@ -216,6 +216,22 @@ def title_fingerprint(title: str) -> str:
     return " ".join(words)
 
 
+_TOPIC_ENTITIES = [
+    "kerama", "marazzi", "ikea", "misladen", "syntaxis",
+    "noam", "dvir", "homedit", "phoenix",
+]
+
+
+def topic_fingerprint(title: str, summary: str = "") -> str:
+    """Extract topic fingerprint for semantic dedup."""
+    combined = f"{title} {summary}".lower()
+    found = []
+    for entity in _TOPIC_ENTITIES:
+        if entity in combined and entity not in found:
+            found.append(entity)
+    return " ".join(sorted(found))
+
+
 def text_fingerprint(text: str) -> str:
     t = re.sub(r"[^\w\sа-яё]", "", (text or "").lower())
     t = re.sub(r"\s+", " ", t).strip()

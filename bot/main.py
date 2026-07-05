@@ -190,6 +190,11 @@ class DashaBot:
                     tf = title_fingerprint(title)
                     if tf and await db.is_news_posted(f"tf:{tf}"):
                         continue
+                    # Topic fingerprint dedup (catches different articles about same event)
+                    topic = topic_fingerprint(title, item.get("summary", ""))
+                    if topic and len(topic) > 3 and await db.is_news_posted(f"topic:{topic}"):
+                        logger.info(f"Topic already posted — skip: {topic[:40]}")
+                        continue
                     news_item = item
                     break
 
@@ -229,7 +234,7 @@ class DashaBot:
         from aiogram.enums import ParseMode
         from bot.post_utils import (smart_truncate, smart_truncate_html, clean_post_text,
             validate_post_text, enforce_no_meetings, validate_image, text_fingerprint,
-            url_normalize, date_context, UNIQUIFICATION_RULES)
+            url_normalize, date_context, UNIQUIFICATION_RULES, topic_fingerprint)
         from bot.text_polish import polish_grammar, linkify_contacts
 
         title = news_item.get("title", "")
@@ -304,7 +309,7 @@ class DashaBot:
         tel_digits = phone.replace(" ", "").replace("(", "").replace(")", "").replace("-", "")
         FOOTER = (
             f'\n\nАвтор <a href="https://t.me/asdasha_bot">@asdasha_bot</a> Кухни на заказ '
-            f'📞 <a href="tel:{tel_digits}">{phone}</a> '
+            f'📞 {phone} '
             f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
         )
 
@@ -369,6 +374,10 @@ class DashaBot:
             tf = title_fingerprint(title)
             if tf:
                 await db.mark_news_posted(f"tf:{tf}", title)
+            # Mark topic fingerprint
+            topic = topic_fingerprint(title, news_item.get("summary", ""))
+            if topic and len(topic) > 3:
+                await db.mark_news_posted(f"topic:{topic}", title)
             await db.mark_news_posted(f"fp:{fp}", title)
         return posted
 
