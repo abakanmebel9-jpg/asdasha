@@ -207,6 +207,36 @@ def validate_image(content: bytes) -> bool:
     return False
 
 
+def is_svg(content: bytes) -> bool:
+    if not content:
+        return False
+    head = content[:200].lower()
+    return b"<svg" in head or (b"<?xml" in head and b"svg" in head)
+
+
+def convert_svg_to_png(svg_content: bytes, output_width: int = 512) -> bytes:
+    try:
+        import cairosvg
+        png_bytes = cairosvg.svg2png(bytestring=svg_content, output_width=output_width, output_height=output_width)
+        return png_bytes
+    except Exception as e:
+        logger.warning(f"SVG→PNG conversion failed: {e}")
+        return b""
+
+
+def prepare_partner_logo(content: bytes) -> bytes:
+    """Prepare partner logo: SVG→PNG conversion, or return as-is for JPEG/PNG/WebP."""
+    if not content:
+        return b""
+    if validate_image(content):
+        return content
+    if is_svg(content):
+        png = convert_svg_to_png(content)
+        if png and validate_image(png):
+            return png
+    return b""
+
+
 # ─── Deduplication ──────────────────────────────────────────────────────────
 
 def title_fingerprint(title: str) -> str:
