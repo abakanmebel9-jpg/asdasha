@@ -79,7 +79,9 @@ jobs:
       - name: Restore database cache
         uses: actions/cache@v4
         with:
-          path: data/dasha.db
+          path: |
+            data/dasha.db
+            data/posted_news.json
           key: dasha-bot-db-v1
           restore-keys: |
             dasha-bot-db-
@@ -146,7 +148,9 @@ jobs:
         uses: actions/cache/save@v4
         if: always()
         with:
-          path: data/dasha.db
+          path: |
+            data/dasha.db
+            data/posted_news.json
           key: dasha-bot-db-v1-${{ github.run_id }}
 
       - name: Save database to git
