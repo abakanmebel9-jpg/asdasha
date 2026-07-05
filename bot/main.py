@@ -205,9 +205,60 @@ class DashaBot:
                         break
 
                 if not candidates:
-                    logger.info("All furniture news posted — picking random for AI uniquification")
-                    import random as _rng
-                    candidates = _rng.sample(all_items, min(2, len(all_items)))
+                    # AI-generated fallback: furniture topics (restored from pre-OpenClaw)
+                    logger.info("All furniture news posted — AI-generated furniture topic")
+                    furniture_topics = [
+                        "Кухни из массива дуба: плюсы и минусы",
+                        "Скандинавский стиль в интерьере кухни",
+                        "Как выбрать ЛДСП для кухни",
+                        "Угловые кухни: планировка для маленькой кухни",
+                        "Керамогранит vs плитка для фартука",
+                        "МДФ фасады: уход и эксплуатация",
+                        "Кухонный остров: за и против",
+                        "Хранение на кухне: 5 лайфхаков дизайнера",
+                        "Освещение кухни: правила и тренды",
+                        "Цвет кухни 2026: тренды и сочетания",
+                        "Барная стойка вместо обеденного стола",
+                        "Интеграция техники в кухонный гарнитур",
+                        "Выдвижные системы: организация хранения",
+                        "Кухни в стиле лофт: характерные черты",
+                        "Минимализм на кухне: меньше деталей, больше пространства",
+                    ]
+                    topic = random.choice(furniture_topics)
+                    mood = await current_mood_descriptor()
+                    prompt = (
+                        f"Напиши пост для канала @abakan_mebel на тему: {topic}.\n\n"
+                        f"Контекст: {date_context()}, настроение: {mood}\n"
+                        f"Даша — дизайнер мебели из Абакана. Личный опыт, материалы (массив, ЛДСП, МДФ).\n"
+                        f"500-800 символов, живо, с эмодзи. Женский род. По-русски."
+                    )
+                    from bot.persona import CHANNEL_POST_PROMPT
+                    post = await ai_client.chat(prompt, system=CHANNEL_POST_PROMPT, max_tokens=600, allow_static_fallback=False, prefer_pollinations=True)
+                    if post:
+                        from bot.post_utils import clean_post_text, smart_truncate
+                        from bot.text_polish import polish_grammar
+                        ai_text = clean_post_text(post, "Даша")
+                        ai_text = polish_grammar(ai_text)
+                        phone = getattr(config, 'PHONE', '+7 (913) 448-37-17')
+                        tel_digits = phone.replace(" ", "").replace("(", "").replace(")", "").replace("-", "")
+                        FOOTER = (
+                            f'\n\nАвтор <a href="https://t.me/asdasha_bot">@asdasha_bot</a> Кухни на заказ '
+                            f'📞 {phone} '
+                            f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
+                        )
+                        from aiogram.enums import ParseMode
+                        text_body = smart_truncate(ai_text, 4096 - len(FOOTER) - 10, 0)
+                        text_full = text_body + FOOTER
+                        try:
+                            await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
+                            logger.info(f"Channel: posted AI FALLBACK ({len(text_full)} chars) — {topic[:40]}")
+                        except Exception as e:
+                            # Plain fallback
+                            import re
+                            plain = re.sub(r'<[^>]+>', '', text_full)[:4096]
+                            await self.bot.send_message(channel_id, plain)
+                            logger.info(f"Channel: posted AI FALLBACK plain ({len(plain)} chars)")
+                    continue  # skip the rest of the loop
 
                 # 3. Try candidates until we post 1 (or exhaust candidates)
                 posted = False
