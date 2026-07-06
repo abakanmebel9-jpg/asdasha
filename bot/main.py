@@ -250,13 +250,15 @@ class DashaBot:
                         text_body = smart_truncate(ai_text, 4096 - len(FOOTER) - 10, 0)
                         text_full = text_body + FOOTER
                         try:
-                            await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
+                            msg = await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
+                            await self._react_to_own_post(channel_id, msg.message_id, text_full[:200])
                             logger.info(f"Channel: posted AI FALLBACK ({len(text_full)} chars) — {topic[:40]}")
                         except Exception as e:
                             # Plain fallback
                             import re
                             plain = re.sub(r'<[^>]+>', '', text_full)[:4096]
-                            await self.bot.send_message(channel_id, plain)
+                            msg = await self.bot.send_message(channel_id, plain)
+                            await self._react_to_own_post(channel_id, msg.message_id, plain[:200])
                             logger.info(f"Channel: posted AI FALLBACK plain ({len(plain)} chars)")
                     continue  # skip the rest of the loop
 
@@ -395,8 +397,10 @@ class DashaBot:
             try:
                 media_group = await self._build_media_group(all_images, caption_full)
                 if media_group:
-                    await self.bot.send_media_group(channel_id, media_group)
+                    msgs = await self.bot.send_media_group(channel_id, media_group)
                     posted = True
+                    if msgs:
+                        await self._react_to_own_post(channel_id, msgs[0].message_id, caption_full[:200])
                     logger.info(f"Channel: posted NEWS media_group ({len(media_group)} photos) — {title[:40]}")
             except Exception as e:
                 logger.warning(f"send_media_group failed: {e}")
@@ -420,8 +424,9 @@ class DashaBot:
         # Case C: no image → send_message (HTML)
         if not posted:
             try:
-                await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
+                msg = await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
                 posted = True
+                await self._react_to_own_post(channel_id, msg.message_id, text_full[:200])
                 logger.info(f"Channel: posted NEWS text-only ({len(text_full[:4096])} chars) — {title[:40]}")
             except Exception as e:
                 logger.error(f"Channel post failed (HTML): {e}")
@@ -473,6 +478,18 @@ class DashaBot:
                 except Exception as e:
                     logger.warning(f"media group img fetch failed ({url[:50]}): {e}")
         return media
+    async def _react_to_own_post(self, channel_id: int, message_id: int, text: str = ""):
+        """Set 3 positive reactions on own channel post."""
+        try:
+            from bot.reactions import maybe_react
+            await maybe_react(
+                self.bot, channel_id, message_id, text,
+                prob=1.0, force=True, count=3,
+            )
+            logger.info(f"Reacted to own post: {channel_id}/{message_id}")
+        except Exception as e:
+            logger.warning(f"React to own post failed: {e}")
+
     async def _notify_owner(self):
         mood = await current_mood_descriptor()
         try:
