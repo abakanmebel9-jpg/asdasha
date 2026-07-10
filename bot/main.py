@@ -156,7 +156,7 @@ class DashaBot:
         from bot.persona import CHANNEL_POST_PROMPT
         from bot.post_utils import topic_fingerprint
         from aiogram.enums import ParseMode
-        await asyncio.sleep(120)
+        await asyncio.sleep(30)  # was 120 — faster first post
         post_interval = 1800  # 30 min (restored to pre-OpenClaw schedule)
         NEWS_URL = "https://raw.githubusercontent.com/abakanmebel9-jpg/par/main/data/furniture-news.json"
 
@@ -260,7 +260,7 @@ class DashaBot:
                             msg = await self.bot.send_message(channel_id, plain)
                             await self._react_to_own_post(channel_id, msg.message_id, plain[:200])
                             logger.info(f"Channel: posted AI FALLBACK plain ({len(plain)} chars)")
-                    continue  # skip the rest of the loop
+                    # Don't continue — fall through to sleep at end of loop
 
                 # 3. Try candidates until we post 1 (or exhaust candidates)
                 posted = False
