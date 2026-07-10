@@ -230,7 +230,7 @@ class DashaBot:
                         f"Напиши пост для канала @abakan_mebel на тему: {topic}.\n\n"
                         f"Контекст: {date_context()}, настроение: {mood}\n"
                         f"Даша — дизайнер мебели из Абакана. Личный опыт, материалы (массив, ЛДСП, МДФ).\n"
-                        f"500-800 символов, живо, с эмодзи. Женский род. По-русски."
+                        f"500-800 символов, живо, с эмодзи. SEO: ключевые слова в начале, 1-2 хештега, вопрос в конце. Женский род. По-русски."
                     )
                     from bot.persona import CHANNEL_POST_PROMPT
                     post = await ai_client.chat(prompt, system=CHANNEL_POST_PROMPT, max_tokens=600, allow_static_fallback=False, prefer_pollinations=True)
