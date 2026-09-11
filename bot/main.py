@@ -107,6 +107,67 @@ def _visible_len(html_text: str) -> int:
     return len(_h.unescape(re.sub(r"<[^>]+>", "", html_text or "")))
 
 
+def _is_structurally_incomplete(text: str) -> bool:
+    """Оборван ли структурный тип поста (сравнение/миф/чек-лист) посреди формата.
+
+    Провайдер иногда срезает ответ даже при max_tokens=1200 — тогда
+    «Вариант 1» есть, а «Вариант 2» не успел появиться. Такой пост
+    выглядит целым (finish_sentences), но сравнение неполное.
+    """
+    t = text or ""
+    has_v1 = ("Вариант 1" in t) or ("🅰" in t)
+    has_v2 = ("Вариант 2" in t) or ("🅱" in t)
+    if has_v1 and not has_v2:
+        return True
+    if "Миф:" in t and "Правда:" not in t:
+        return True
+    if "Что было:" in t and "Что получилось:" not in t:
+        return True
+    return False
+
+
+_RETRY_SUFFIX = (
+    "\n\nКОНТРОЛЬ ДЛИНЫ (важно): твой предыдущий ответ был оборван. "
+    "Пиши МАКСИМУМ 550 знаков: сжато, без воды, но СО ВСЕМИ структурными элементами формата."
+)
+
+
+def _clean_pipeline(raw: str) -> str:
+    """Единая чистка AI-ответа: markdown/утечки → встречи → типографика → ремонт обрывов."""
+    t = clean_post_text(raw, "Даша")
+    t = enforce_no_meetings(t)
+    t = polish_grammar(t)
+    t = finish_sentences(t)
+    return t
+
+
+async def _generate_channel_post(prompt: str, channel_prompt: str) -> str:
+    """Генерация поста канала с 1 retry: если структура оборвана — повтор с компактным лимитом.
+
+    Возвращает ГОТОВЫЙ чистый текст (clean→enforce→polish→finish) или "".
+    """
+    first = ""
+    for attempt in range(2):
+        suffix = "" if attempt == 0 else _RETRY_SUFFIX
+        raw = await ai_client.chat(
+            prompt + suffix, system=channel_prompt,
+            max_tokens=1200, temperature=0.9, allow_static_fallback=False, prefer_pollinations=True,
+        )
+        if not raw:
+            logger.warning(f"Post generation attempt {attempt+1}: empty response")
+            continue
+        text = _clean_pipeline(raw)
+        if len(text) >= 250 and not _is_structurally_incomplete(text):
+            return text
+        if attempt == 0:
+            logger.info(f"Post structurally incomplete (len={len(text)}) — retrying compact")
+            first = text if len(text) > len(first) else first
+        else:
+            return text if len(text) >= 250 else (first if len(first) >= 250 else "")
+    return first if len(first) >= 250 else ""
+
+
+
 def _style_channel_post(ai_text: str) -> str:
     """Финальный конвейер качества тела поста: escape → хештеги → стилизация.
 
@@ -435,18 +496,12 @@ class DashaBot:
             f"Даша — дизайнер корпусной мебели из Абакана. Личный опыт, конкретика: "
             f"материалы (массив, ЛДСП, МДФ), фурнитура, размеры, ошибки клиентов.{kb_block}\n\n"
             f"Требования: 600-900 знаков, живо, с эмодзи в тему, 1-2 хештега в конце, "
-            f"вопрос аудитории в самом конце. Женский род. По-русски."
+            f"вопрос аудитории в самом конце. Женский род. Только по-русски, БЕЗ английских слов."
         )
-        post = await ai_client.chat(prompt, system=CHANNEL_POST_PROMPT, max_tokens=1200,
-                                    allow_static_fallback=False, prefer_pollinations=True)
-        if not post:
-            logger.warning("AI fallback topic: empty response")
+        ai_text = await _generate_channel_post(prompt, CHANNEL_POST_PROMPT)
+        if not ai_text:
+            logger.warning("AI fallback topic: empty/incomplete response")
             return False
-        ai_text = clean_post_text(post, "Даша")
-        ai_text = enforce_no_meetings(ai_text)
-        ai_text = polish_grammar(ai_text)
-        # Ремонт обрыва по max_tokens: срезаем до последнего завершённого предложения
-        ai_text = finish_sentences(ai_text)
         is_valid, reason = validate_post_text(ai_text)
         if not is_valid or len(ai_text) < 250:
             logger.warning(f"AI fallback topic validation FAILED ({reason}, len={len(ai_text)}) — {topic[:40]}")
@@ -545,31 +600,19 @@ class DashaBot:
             f"- Стили: скандинавский, лофт, минимализм, классика\n"
             f"- Личный опыт: 'В моих проектах...', 'Я всегда задумываюсь...'\n"
             f"- Эмодзи умеренно и в тему\n"
-            f"- Женский род, по-русски, БЕЗ грамматических ошибок\n"
+            f"- Женский род, ТОЛЬКО по-русски, без английских слов и вкраплений, БЕЗ грамматических ошибок\n"
             f"- НЕ добавляй ссылки, НЕ пиши 'Источник'\n"
             f"- НЕ начинай с 'Даша:'\n"
             f"- НЕ предлагай звонки/встречи/записи (это добавит редакция отдельно)"
         )
-        ai_commentary = await ai_client.chat(
-            prompt, system=channel_prompt,
-            max_tokens=1200, temperature=0.9, allow_static_fallback=False, prefer_pollinations=True
-        )
+        ai_commentary = await _generate_channel_post(prompt, channel_prompt)
 
         if not ai_commentary:
-            logger.warning("AI commentary empty — will retry this news next cycle")
+            logger.warning("AI commentary empty/incomplete — will retry this news next cycle")
             return False
 
-        # Clean AI output
-        ai_text = clean_post_text(ai_commentary, "Даша")
-
-        # Safety: remove meeting/booking proposals
-        ai_text = enforce_no_meetings(ai_text)
-
-        # Russian typography polish
-        ai_text = polish_grammar(ai_text)
-
-        # Ремонт обрыва по max_tokens: срезаем до последнего завершённого предложения
-        ai_text = finish_sentences(ai_text)
+        # Чистка (markdown/утечки/встречи/типографика/ремонт обрывов) уже внутри
+        ai_text = ai_commentary
 
         # Validate (politics/NSFW/furniture-relevance)
         is_valid, reason = validate_post_text(ai_text)
