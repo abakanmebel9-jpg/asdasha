@@ -14,3 +14,4 @@ logs/
 Thumbs.db
 venv/*
 venv/
+data/posted_news.json

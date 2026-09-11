@@ -342,6 +342,7 @@ from bot.quiz import quiz_router
 from bot.calculator import calc_router
 from bot.lead_forms import lead_router
 from bot.inspiration import inspiration_router
+from bot.storage import storage_router
 
 OPENCLAW_STATE_DIR = os.getenv("OPENCLAW_STATE_DIR", str(Path.cwd() / ".openclaw-state"))
 _openclaw_proc = None
@@ -402,6 +403,7 @@ class DashaBot:
         self.dp.include_router(quiz_router)
         self.dp.include_router(calc_router)
         self.dp.include_router(inspiration_router)
+        self.dp.include_router(storage_router)
         self.dp.include_router(chat_router)
         self.dp.include_router(group_router)
         self.dp.include_router(channel_router)
@@ -454,6 +456,16 @@ class DashaBot:
             asyncio.create_task(lead_followup_loop(self.bot), name="lead_followup_loop")
             logger.info("Lead follow-up loop enabled (24h check-in)")
         except Exception as e: logger.warning(f"Lead follow-up loop failed: {e}")
+        # Еженедельный дайджест в канал — воскресенье 18:00 по Абакану
+        if config.CHANNEL_DIGEST_ENABLED and config.CHANNEL_ID:
+            try:
+                from bot.channel_digest import digest_loop
+                asyncio.create_task(
+                    digest_loop(self.bot, int(config.CHANNEL_ID)),
+                    name="channel_digest_loop",
+                )
+                logger.info("Channel digest loop enabled (Sun 18:00 Asia/Krasnoyarsk)")
+            except Exception as e: logger.warning(f"Channel digest loop failed: {e}")
         # Furniture Channel scheduler — Даша posts to @abakan_mebel
         if config.CHANNEL_ID:
             asyncio.create_task(self._channel_scheduler(), name="channel_scheduler")
@@ -483,6 +495,8 @@ class DashaBot:
                 BotCommand(command="process", description="Этапы работы 🔧"),
                 BotCommand(command="care", description="Уход за мебелью 🧼"),
                 BotCommand(command="terms", description="Мебельный словарь 📖"),
+                BotCommand(command="storage", description="Идеи хранения 🗃"),
+                BotCommand(command="about", description="О производстве 🏭"),
                 BotCommand(command="fact", description="Факт о мебели 💡"),
             ]
             private_cmds = public_cmds + [

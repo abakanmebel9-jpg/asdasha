@@ -56,6 +56,8 @@ _HELP_TEXT = (
     "/process — этапы работы: от заявки до гарантии 🔧\n"
     "/faq — частые вопросы ❓\n"
     "/terms — мебельный словарь: ЛДСП, МДФ, доводчики 📖\n"
+    "/storage — идеи хранения по комнатам 🗃\n"
+    "/about — о производстве и гарантиях 🏭\n"
     "/fact — интересный факт о мебели\n"
     "/clear — забыть историю чата\n"
     "/mood — моё настроение\n"
@@ -183,6 +185,15 @@ async def cmd_terms(message):
         await message.reply(format_glossary(4)[:4000], reply_markup=_contacts_keyboard())
     except Exception:
         await message.reply(format_glossary(4)[:4000])
+
+@chat_router.message(Command("about"))
+async def cmd_about(message):
+    """О производстве и гарантиях — личка и группы."""
+    from bot.service_info import format_about
+    try:
+        await message.reply(format_about()[:4000], reply_markup=_contacts_keyboard())
+    except Exception:
+        await message.reply(format_about()[:4000])
 
 _FURNITURE_HINTS = [
     "кухн", "шкаф", "мебел", "стол", "столешниц", "фасад", "мдф", "лдсп",

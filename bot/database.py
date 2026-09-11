@@ -260,6 +260,39 @@ async def get_top_users_since(since_ts: int, limit: int = 3):
     rows = await cur.fetchall()
     return [(int(r["user_id"]), (r["first_name"] or r["username"] or "?"), int(r["n"])) for r in rows]
 
+# ─── Еженедельный дайджест канала (раунд 9) ─────────────────────────────────
+
+# Служебные ключи/заголовки posted_news, которые НЕ считаются темами постов
+_DIGEST_NOISE = {"poll-timestamp", ""}
+
+
+async def get_posted_titles_since(since_ts: int, limit: int = 12):
+    """Темы постов за N дней (title из posted_news), отфильтрованные от служебных записей.
+
+    Возвращает список уникальных заголовков в хронологическом порядке.
+    """
+    cur = await _conn().execute(
+        "SELECT title, posted_at FROM posted_news "
+        "WHERE posted_at > ? AND title IS NOT NULL ORDER BY posted_at ASC",
+        (since_ts,),
+    )
+    rows = await cur.fetchall()
+    seen, titles = set(), []
+    for r in rows:
+        t = (r["title"] or "").strip()
+        if not t or t in _DIGEST_NOISE:
+            continue
+        if t.startswith("{") or t.startswith("["):   # JSON-хранилища (hashtag:recent и др.)
+            continue
+        key = t.lower()[:60]
+        if key in seen:
+            continue
+        seen.add(key)
+        titles.append(t)
+        if len(titles) >= limit:
+            break
+    return titles
+
 # Cleanup
 async def record_donation(user_id, stars, charge_id):
     await _conn().execute("INSERT INTO donations (user_id, stars_amount, telegram_charge_id, created_at) VALUES (?,?,?,?)", (user_id, stars, charge_id, int(time.time())))
