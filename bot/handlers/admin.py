@@ -100,3 +100,58 @@ async def cmd_post_now(message):
         await message.reply("🚀 Форс-пост запрошен — шедулер проснётся и опубликует пост в течение ~30 секунд. Проверь @abakan_mebel.")
     else:
         await message.reply("⏳ Запрос уже был меньше минуты назад — подожди немного.")
+
+@admin_router.message(Command("report"))
+async def cmd_report(message):
+    """Сводка по боту за 7 дней: заявки на замер, аудитория, посты, AI."""
+    if not _is_admin(message): return
+    import time as _time
+    week_ago = int(_time.time()) - 7 * 86400
+    lines = ["📊 Сводка за 7 дней:"]
+
+    # Заявки на замер
+    try:
+        n_req = await db.count_measure_requests(week_ago)
+        total_req = await db.get_total_measure_requests()
+        recent = await db.get_recent_measure_requests(3)
+        lines.append(f"\n📐 Заявки на замер: {n_req} (всего {total_req})")
+        for r in recent:
+            import datetime
+            dt = datetime.datetime.fromtimestamp(r["ts"]).strftime("%d.%m %H:%M")
+            lines.append(f"  • #{r['id']} {r['name']} — {r['furniture_type']}, {r['phone']} ({dt})")
+        if not recent:
+            lines.append("  (пока нет заявок)")
+    except Exception as e:
+        lines.append(f"📐 Заявки: ошибка ({e})")
+
+    # Аудитория
+    try:
+        conn = db._conn()
+        cur = await conn.execute("SELECT COUNT(*) AS n FROM users WHERE first_seen > ?", (week_ago,))
+        new_users = (await cur.fetchone())["n"]
+        cur = await conn.execute("SELECT COUNT(*) AS n FROM private_messages WHERE ts > ? AND role='user'", (week_ago,))
+        pm = (await cur.fetchone())["n"]
+        lines.append(f"\n👥 Новые пользователи: {new_users}\n💬 Сообщений в личке: {pm}")
+    except Exception as e:
+        lines.append(f"👥 Аудитория: ошибка ({e})")
+
+    # Посты
+    try:
+        conn = db._conn()
+        cur = await conn.execute("SELECT COUNT(*) AS n FROM posted_news WHERE posted_at > ?", (week_ago,))
+        posts = (await cur.fetchone())["n"]
+        lines.append(f"\n📰 Постов в канал: {posts}")
+    except Exception as e:
+        lines.append(f"📰 Посты: ошибка ({e})")
+
+    # AI
+    s = ai_client.stats()
+    gw = s.get("gateway", "—")
+    lines.append(
+        f"\n🤖 AI: запросов {s.get('requests',0)}, шлюз {gw}, "
+        f"ошибок {s.get('fail',0)}"
+    )
+    if s.get("last_error"):
+        lines.append(f"⚠️ Последняя ошибка: {s.get('last_error','')[:100]}")
+
+    await message.reply("\n".join(lines)[:4000])

@@ -196,6 +196,8 @@ from bot.handlers.channels import channel_router
 from bot.handlers.admin import admin_router
 from bot.handlers.inline import inline_router
 from bot.quiz import quiz_router
+from bot.calculator import calc_router
+from bot.lead_forms import lead_router
 
 OPENCLAW_STATE_DIR = os.getenv("OPENCLAW_STATE_DIR", str(Path.cwd() / ".openclaw-state"))
 _openclaw_proc = None
@@ -252,7 +254,9 @@ class DashaBot:
         self.bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
         self.dp = Dispatcher(storage=MemoryStorage())
         self.dp.include_router(admin_router)
+        self.dp.include_router(lead_router)
         self.dp.include_router(quiz_router)
+        self.dp.include_router(calc_router)
         self.dp.include_router(chat_router)
         self.dp.include_router(group_router)
         self.dp.include_router(channel_router)
@@ -300,6 +304,30 @@ class DashaBot:
         await self._notify_owner()
         try: await self.bot.delete_webhook(drop_pending_updates=True)
         except: pass
+        # Меню команд в UI Telegram (личка: полный список; группы: публичные)
+        try:
+            from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+            public_cmds = [
+                BotCommand(command="consult", description="Контакты и связь 📞"),
+                BotCommand(command="measure", description="Заявка на бесплатный замер 📐"),
+                BotCommand(command="calc", description="Калькулятор стоимости 🧮"),
+                BotCommand(command="catalog", description="Каталог решений с ценами 🛋"),
+                BotCommand(command="price", description="Ориентиры по ценам 💰"),
+                BotCommand(command="quiz", description="Квиз «Подбери мебель» 🧩"),
+                BotCommand(command="reviews", description="Отзывы клиентов ⭐"),
+                BotCommand(command="fact", description="Факт о мебели 💡"),
+            ]
+            private_cmds = public_cmds + [
+                BotCommand(command="help", description="Что я умею"),
+                BotCommand(command="clear", description="Забыть историю чата"),
+                BotCommand(command="mood", description="Моё настроение"),
+                BotCommand(command="whoami", description="Что я о тебе помню"),
+            ]
+            await self.bot.set_my_commands(private_cmds, scope=BotCommandScopeAllPrivateChats())
+            await self.bot.set_my_commands(public_cmds, scope=BotCommandScopeAllGroupChats())
+            logger.info("Bot commands menu registered (private + groups)")
+        except Exception as e:
+            logger.warning(f"set_my_commands failed: {e}")
         allowed = ["message", "edited_message", "channel_post", "edited_channel_post", "inline_query", "chosen_inline_result"]
         logger.info("=== Даша в сети — слушаю сообщения ===")
         polling_retries = 0

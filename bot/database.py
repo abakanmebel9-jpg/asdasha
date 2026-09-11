@@ -35,6 +35,21 @@ CREATE TABLE IF NOT EXISTS posted_news (
 CREATE TABLE IF NOT EXISTS chat_summaries (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, summary TEXT NOT NULL, topics TEXT DEFAULT '', ts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_cs_chat ON chat_summaries(chat_id, id DESC);
 CREATE TABLE IF NOT EXISTS moods (id INTEGER PRIMARY KEY DEFAULT 1, mood TEXT DEFAULT 'спокойная', energy REAL DEFAULT 0.5, ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS measure_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    username TEXT DEFAULT '',
+    first_name TEXT DEFAULT '',
+    chat_title TEXT DEFAULT '',
+    name TEXT DEFAULT '',
+    furniture_type TEXT DEFAULT '',
+    address TEXT DEFAULT '',
+    phone TEXT DEFAULT '',
+    preferred_time TEXT DEFAULT '',
+    status TEXT DEFAULT 'new',
+    ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_measure_ts ON measure_requests(ts);
 """
 
 _db: Optional[aiosqlite.Connection] = None
@@ -184,6 +199,34 @@ async def get_mood():
 async def set_mood(mood, energy):
     await _conn().execute("INSERT INTO moods(id, mood, energy, ts) VALUES(1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET mood=excluded.mood, energy=excluded.energy, ts=excluded.ts", (mood, energy, int(time.time())))
     await _conn().commit()
+
+# Measure requests (заявки на бесплатный замер)
+async def add_measure_request(user_id, name, furniture_type, address, phone, preferred_time,
+                              username="", first_name="", chat_title=""):
+    """Сохраняет заявку на замер. Возвращает id заявки."""
+    cur = await _conn().execute(
+        "INSERT INTO measure_requests(user_id, username, first_name, chat_title, name, "
+        "furniture_type, address, phone, preferred_time, status, ts) "
+        "VALUES(?,?,?,?,?,?,?,?,?, 'new', ?)",
+        (user_id, username, first_name, chat_title, name, furniture_type,
+         address, phone, preferred_time, int(time.time())),
+    )
+    await _conn().commit()
+    return cur.lastrowid
+
+async def count_measure_requests(since_ts=0):
+    cur = await _conn().execute("SELECT COUNT(*) AS n FROM measure_requests WHERE ts > ?", (since_ts,))
+    row = await cur.fetchone()
+    return int(row["n"]) if row else 0
+
+async def get_recent_measure_requests(limit=5):
+    cur = await _conn().execute("SELECT * FROM measure_requests ORDER BY id DESC LIMIT ?", (limit,))
+    return [dict(r) for r in await cur.fetchall()]
+
+async def get_total_measure_requests():
+    cur = await _conn().execute("SELECT COUNT(*) AS n FROM measure_requests")
+    row = await cur.fetchone()
+    return int(row["n"]) if row else 0
 
 # Cleanup
 async def record_donation(user_id, stars, charge_id):

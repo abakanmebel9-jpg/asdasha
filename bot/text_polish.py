@@ -84,8 +84,14 @@ def polish_grammar(text: str) -> str:
     text = re.sub(r'\(\s+', '(', text)
     text = re.sub(r'\s+\)', ')', text)
 
-    # 7. Non-breaking space before units (л.с., км/ч, мм, см, м, кг)
-    # text = re.sub(r'\s+(л\.с\.|км/ч|мм|см|кг|м²|м2)', r'\u00A0\1', text)
+    # 7. Квадратные/кубические метры: «кв.м», «м2» → «м²», «м3» → «м³»
+    text = re.sub(r'\bкв\.\s*м\b', 'м²', text, flags=re.IGNORECASE)
+    text = re.sub(r'(\d)\s?м2\b', r'\1 м²', text, flags=re.IGNORECASE)
+    text = re.sub(r'(\d)\s?м3\b', r'\1 м³', text, flags=re.IGNORECASE)
+
+    # 7.1 Неразрывный пробел между числом и единицей измерения
+    # (не трогаем одиночную «м» — слишком многозначна: «3 месяца», «3 м»)
+    text = re.sub(r'(\d)\s+(мм|см|дм|кг|км|м²|м³|лет)\b', '\\1\u00A0\\2', text)
 
     # 8. Fix multiple spaces
     text = re.sub(r'[ \t]{2,}', ' ', text)
@@ -174,19 +180,52 @@ _BOLD_LABELS = [
     "Мой фаворит", "Мой выбор", "Фаворит",
     "История из проекта", "Что было:", "Что сделали:", "Что получилось:",
     "До:", "После:", "Итог:", "Практика показывает",
+    "Ошибка:", "Решение:", "Лайфхак:", "Правило:", "Запомните:",
+    "Совет дизайнера:", "Вопрос:", "Ответ:",
+    "Уход:", "Хранение:", "Срок:", "Бюджет:",
+    "Материал:", "Материалы:", "Фурнитура:",
 ]
 
 _BOLD_LINE_PREFIXES = ("🅰", "🅱", "🅰️", "🅱️")
+
+# «Шаг 1», «Шаг 2» — жирным (регэкспом, т.к. номер переменный)
+_STEP_PAT = re.compile(r"(?<![A-Za-zА-Яа-яЁё0-9])(Шаг \d{1,2})(?![0-9])")
+
+# Нумерованный список в начале строки: «1. » / «2) » → жирный маркер
+_NUM_PAT = re.compile(r"^(\s*)(\d{1,2})[.)]\s+")
+
+# Варианты ответа «А) », «Б) » в постах-вопросах → жирная буква
+_LETTER_PAT = re.compile(r"^(\s*)([АБВГД])[.)]\s+")
+
+# Максимальная длина строки-хука, которую выделяем жирным целиком
+_HOOK_MAX_LEN = 120
+
+
+def _is_hook_line(stripped: str) -> bool:
+    """Хук-вопрос (первая строка) — жирным целиком.
+
+    Условия: короткая строка, содержит «?» (хук-вопрос из промпта),
+    не является структурной лейбл-строкой («…:» в конце).
+    """
+    return (
+        bool(stripped)
+        and len(stripped) <= _HOOK_MAX_LEN
+        and "?" in stripped
+        and not stripped.endswith(":")
+    )
 
 
 def stylize_post_html(text: str) -> str:
     """Детерминированная HTML-стилизация поста канала (текст уже escaped, без тегов).
 
-    1. Жирные структурные лейблы: «Плюсы:», «Миф:», «Вариант 1:» → <b>…</b>
+    1. Хук (первая строка до 120 знаков) — жирным целиком
+    2. Жирные структурные лейблы: «Плюсы:», «Миф:», «Вариант 1:» → <b>…</b>
        (все вхождения в строке, только на границе слова)
-    2. Строки-варианты (🅰/🅱) — вся строка жирным
-    3. Разделитель «· · ·» перед блоком хештегов
-    4. Дефис-маркеры в начале строки → «• »
+    3. Строки-варианты (🅰/🅱) — вся строка жирным
+    4. «Шаг N», нумерованные списки «1.», варианты «А)» — жирные маркеры
+    5. Цены: «95 000руб» / «95 000 ₽» → «95 000 ₽»
+    6. Разделитель «· · ·» перед блоком хештегов
+    7. Дефис-маркеры в начале строки → «• »
     Возвращает текст с тегами <b> (Telegram parse_mode=HTML).
     """
     if not text:
@@ -194,6 +233,7 @@ def stylize_post_html(text: str) -> str:
 
     lines = text.split("\n")
     out = []
+    hook_done = False
     # Регэкспы лейблов: граница слова слева + необязательное «:» справа
     label_patterns = [
         (re.compile(r"(?<![A-Za-zА-Яа-яЁё0-9])(" + re.escape(lbl) + r":?)"), lbl)
@@ -201,6 +241,15 @@ def stylize_post_html(text: str) -> str:
     ]
     for line in lines:
         stripped = line.strip()
+        # Хук — первая содержательная строка-вопрос: жирным целиком
+        if not hook_done and _is_hook_line(stripped) \
+                and not stripped.startswith(_BOLD_LINE_PREFIXES):
+            indent = line[:len(line) - len(line.lstrip())]
+            out.append(f"{indent}<b>{stripped}</b>")
+            hook_done = True
+            continue
+        if stripped:
+            hook_done = True
         # Строки-варианты сравнения — целиком жирным
         if stripped.startswith(_BOLD_LINE_PREFIXES) and len(stripped) > 2:
             indent = line[:len(line) - len(line.lstrip())]
@@ -210,6 +259,16 @@ def stylize_post_html(text: str) -> str:
         styled = line
         for pat, _lbl in label_patterns:
             styled = pat.sub(r"<b>\1</b>", styled)
+        # «Шаг 1» жирным
+        styled = _STEP_PAT.sub(r"<b>\1</b>", styled)
+        # Маркеры списков
+        m = _NUM_PAT.match(styled)
+        if m:
+            styled = _NUM_PAT.sub(lambda mm: f"{mm.group(1)}<b>{mm.group(2)}.</b> ", styled)
+        else:
+            m2 = _LETTER_PAT.match(styled)
+            if m2:
+                styled = _LETTER_PAT.sub(lambda mm: f"{mm.group(1)}<b>{mm.group(2)})</b> ", styled)
         # Дефис-маркер списка → bullet
         if styled.lstrip().startswith("- "):
             indent = styled[:len(styled) - len(styled.lstrip())]
@@ -217,6 +276,9 @@ def stylize_post_html(text: str) -> str:
         out.append(styled)
 
     result = "\n".join(out)
+
+    # Цены к единому виду: «95 000руб», «95 000 руб.», «95 000₽» → «95 000 ₽»
+    result = re.sub(r"(\d)\s?(?:руб\.?|₽)", r"\1 ₽", result)
 
     # Разделитель перед блоком хештегов (строка из одних #тегов)
     result = re.sub(r"\n\n(#[\wа-яё])", r"\n\n· · ·\n\1", result, flags=re.IGNORECASE)

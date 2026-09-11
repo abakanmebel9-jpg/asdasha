@@ -25,8 +25,10 @@ PHONE_DIGITS = "".join(ch for ch in PHONE if ch.isdigit())
 
 
 def _contacts_keyboard() -> InlineKeyboardMarkup:
-    """Кнопки связи: звонок, WhatsApp, сайт, канал."""
+    """Кнопки связи: звонок, WhatsApp, сайт, канал + лид-инструменты."""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📐 Бесплатный замер", callback_data="measure:start"),
+         InlineKeyboardButton(text="🧮 Калькулятор цены", callback_data="calc:restart")],
         [InlineKeyboardButton(text="📞 Позвонить Даше", url=f"tel:+{PHONE_DIGITS}"),
          InlineKeyboardButton(text="💬 WhatsApp", url=f"https://wa.me/{PHONE_DIGITS}")],
         [InlineKeyboardButton(text="🌐 abakanmebel.online", url="https://abakanmebel.online"),
@@ -43,6 +45,8 @@ _HELP_TEXT = (
     "• Голосовые — тоже понимаю 🎤\n\n"
     "Мои команды (работают и в группах):\n"
     "/consult — кнопки связи: звонок, WhatsApp, сайт\n"
+    "/measure — заявка на бесплатный замер 📐\n"
+    "/calc — калькулятор стоимости мебели 🧮\n"
     "/catalog — популярные решения с ценами\n"
     "/price — ориентиры по ценам\n"
     "/quiz — квиз «Подбери свою мебель» 🧩\n"
