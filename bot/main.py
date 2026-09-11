@@ -16,7 +16,7 @@ from bot.post_utils import (
 )
 from bot.text_polish import polish_grammar, linkify_contacts, dedupe_contacts, stylize_post_html
 from bot.post_types import get_type_block, last_post_type
-from bot.post_context import time_of_day_profile, seasonal_context
+from bot.post_context import time_of_day_profile, seasonal_context, weekday_theme, topic_matches_weekday
 
 logging.basicConfig(level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO), format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("dasha.main")
@@ -69,6 +69,9 @@ _CTA_LINES = [
     "🪵 Подберём материал под ваш бюджет — консультация в asdasha_bot",
     "📋 От замера до сборки — этапы работы: asdasha_bot → /process",
     "❓ Частые вопросы по заказу: asdasha_bot → /faq",
+    # Раунд 11: CTA на новые фичи
+    "📏 Стандартные размеры и эргономика: asdasha_bot → /sizes",
+    "🎨 Примеры по стилям с картинками: asdasha_bot → /gallery",
 ]
 _cta_recent: list = []  # последние 3 CTA (раунд 10)
 
@@ -104,6 +107,13 @@ _TOPIC_HASHTAGS = [
     (["прихож", "коридор"], "#прихожая"),
     (["влаж", "ванн", "уход", "мыть"], "#уход"),
     (["мдф", "лдсп", "массив", "материал", "кромк", "фасад"], "#материалы"),
+    # Раунд 11: стилевые теги — ДО общего #дизайнинтерьера, чтобы посты про
+    # конкретный стиль получали специфичный тег (узкий поиск + разнообразие)
+    (["лофт"], "#лофт"),
+    (["сканди", "скандинавск"], "#сканди"),
+    (["минимализм"], "#минимализм"),
+    (["классик", "неоклассик", "ар-деко"], "#классика"),
+    (["детск"], "#детская"),
     (["дизайн", "интерьер", "стил", "тренд", "цвет"], "#дизайнинтерьера"),
     (["освещ", "подсветк"], "#освещение"),
     (["хранен", "порядок", "организац"], "#хранение"),
@@ -369,6 +379,8 @@ from bot.inspiration import inspiration_router
 from bot.storage import storage_router
 from bot.compare import compare_router
 from bot.mistakes import mistakes_router
+from bot.sizes import sizes_router
+from bot.gallery import gallery_router
 
 OPENCLAW_STATE_DIR = os.getenv("OPENCLAW_STATE_DIR", str(Path.cwd() / ".openclaw-state"))
 _openclaw_proc = None
@@ -432,6 +444,8 @@ class DashaBot:
         self.dp.include_router(storage_router)
         self.dp.include_router(compare_router)
         self.dp.include_router(mistakes_router)
+        self.dp.include_router(sizes_router)
+        self.dp.include_router(gallery_router)
         self.dp.include_router(chat_router)
         self.dp.include_router(group_router)
         self.dp.include_router(channel_router)
@@ -526,6 +540,8 @@ class DashaBot:
                 BotCommand(command="storage", description="Идеи хранения 🗃"),
                 BotCommand(command="compare", description="Сравнение материалов ⚖️"),
                 BotCommand(command="mistakes", description="5 ошибок при заказе ⚠️"),
+                BotCommand(command="sizes", description="Стандартные размеры 📏"),
+                BotCommand(command="gallery", description="Галерея стилей 🎨"),
                 BotCommand(command="about", description="О производстве 🏭"),
                 BotCommand(command="fact", description="Факт о мебели 💡"),
             ]
@@ -554,6 +570,29 @@ class DashaBot:
                 await asyncio.sleep(5 if polling_retries <= 5 else 10)
         try: await ai_client.close()
         except: pass
+
+    async def _pick_fallback_topic(self, furniture_topics: list, next_topic_fn) -> str:
+        """Фолбэк-тема с предочтением фокуса дня недели (раунд 11).
+
+        В 75% случаев ищем НЕ постившуюся тему под сегодняшний тематический
+        фокус (post_context.topic_matches_weekday); не нашли — обычный
+        перемешанный цикл _next_topic(). Дедуп прежний: ключ fb:<fp> в БД.
+        """
+        topic = None
+        if random.random() < 0.75:
+            pool = [t for t in random.sample(furniture_topics, min(14, len(furniture_topics)))
+                    if topic_matches_weekday(t)]
+            for t in pool:
+                tfp = title_fingerprint(t)
+                if tfp and not await db.is_news_posted(f"fb:{tfp}"):
+                    topic = t
+                    break
+        if topic is None:
+            topic = next_topic_fn()
+            tfp = title_fingerprint(topic)
+            if tfp and await db.is_news_posted(f"fb:{tfp}"):
+                topic = next_topic_fn()
+        return topic
 
     async def _channel_scheduler(self):
         """Background task: post furniture news to @abakan_mebel every ~30 min.
@@ -674,12 +713,9 @@ class DashaBot:
                         break
 
                 if not candidates:
-                    # AI-generated fallback: мебельные темы (без повторов циклом)
-                    topic = _next_topic()
-                    tfp = title_fingerprint(topic)
-                    if tfp and await db.is_news_posted(f"fb:{tfp}"):
-                        topic = _next_topic()
-                        tfp = title_fingerprint(topic)
+                    # AI-generated fallback: мебельные темы (без повторов циклом),
+                    # с предочтением тематического фокуса дня недели (раунд 11)
+                    topic = await self._pick_fallback_topic(furniture_topics, _next_topic)
                     logger.info(f"No fresh furniture news — AI-generated topic: {topic}")
                     await self._post_ai_topic(topic, mood, channel_id)
 
@@ -729,7 +765,7 @@ class DashaBot:
         from bot.persona import CHANNEL_POST_PROMPT
         from bot.post_utils import clean_post_text, title_fingerprint, smart_truncate_html
         from bot.post_types import get_type_block, last_post_type
-        from bot.post_context import time_of_day_profile, seasonal_context
+        from bot.post_context import time_of_day_profile, seasonal_context, weekday_theme
         from aiogram.enums import ParseMode
 
         kb_block = _furniture_knowledge_block(topic)
@@ -738,17 +774,19 @@ class DashaBot:
         tod_label, tod_block = time_of_day_profile()
         season = seasonal_context()
         season_block = f"\nСезонный контекст: {season}." if season else ""
+        day_name, day_block = weekday_theme()
+        day_hint = f"\nТематический фокус дня ({day_name}): {day_block} — подай под этим углом, если позволяет тип поста и тема."
         prompt = (
             f"Напиши пост для канала @abakan_mebel на тему: {topic}.\n\n"
             f"{type_block}\n\n"
-            f"{tod_block}{season_block}\n"
+            f"{tod_block}{season_block}{day_hint}\n"
             f"Контекст: {date_context()}, настроение: {mood}\n"
             f"Даша — дизайнер корпусной мебели из Абакана. Личный опыт, конкретика: "
             f"материалы (массив, ЛДСП, МДФ), фурнитура, размеры, ошибки клиентов.{kb_block}\n\n"
             f"Требования: 600-900 знаков, живо, с эмодзи в тему, 1-2 хештега в конце, "
             f"вопрос аудитории в самом конце. Женский род. Только по-русски, БЕЗ английских слов. "
             f"ПЕРВАЯ строка-хук — строго о теме «{topic[:80]}», без посторонних клише. "
-            f"НЕ начинай с «Мечтаете о…» и «Может ли…» — это заезженные шаблоны; "
+            f"НЕ начинай с «Мечтаете о…», «Может ли…» или «Как дизайнер, я всегда…» — это заезженные шаблоны; "
             f"варьируй: интригующее утверждение, неожиданный факт/цифра, мини-история из проекта."
             f"{_FORMAT_COMPLIANCE}"
         )
@@ -864,24 +902,28 @@ class DashaBot:
         tod_label, tod_block = time_of_day_profile()
         season = seasonal_context()
         season_block = f"\nСезонный контекст: {season}." if season else ""
+        from bot.post_context import weekday_theme as _weekday_theme
+        day_name, day_block = _weekday_theme()
+        day_hint = f"\nТематический фокус дня ({day_name}): {day_block} — подай под этим углом, если позволяет тип поста и новость."
         prompt = (
             f"Напиши пост для канала @abakan_mebel с комментарием на эту новость о мебели/интерьере.\n\n"
             f"{type_block}\n\n"
-            f"{tod_block}{season_block}\n"
+            f"{tod_block}{season_block}{day_hint}\n"
             f"Контекст: {date_context()}, настроение: {mood}\n\n"
             f"Заголовок новости: {title}\n"
             f"Краткое содержание: {summary[:500]}\n"
             f"{kb_block}"
             f"\n\n{UNIQUIFICATION_RULES}\n\n"
             f"ОБЯЗАТЕЛЬНО:\n"
-            f"1. Хук — вопрос/интригующее утверждение СТРОГО по теме новости «{title[:80]}» (НЕ «Сегодня хочу поделиться», не «Сегодня я расскажу», не «Мечтаете о…», не «Может ли…» — это заезженные шаблоны; варьируй: факт, цифра, мини-история, провокационное утверждение)\n"
+            f"1. Хук — вопрос/интригующее утверждение СТРОГО по теме новости «{title[:80]}» (НЕ «Сегодня хочу поделиться», не «Сегодня я расскажу», не «Мечтаете о…», не «Может ли…», не «Как дизайнер, я всегда…» — это заезженные шаблоны; варьируй: факт, цифра, мини-история, провокационное утверждение)\n"
             f"2. Экспертный разбор: {length_req} от первого лица, личный опыт\n"
             f"3. Вывод-совет + вопрос аудитории + 1-2 хештега ОТДЕЛЬНОЙ строкой в самом конце\n\n"
             f"СТИЛЬ (как пишет Даша):\n"
-            f"- Даша — дизайнер корпусной мебели из Абакана: 'Как дизайнер, я всегда...'\n"
+            f"- Даша — дизайнер корпусной мебели из Абакана\n"
             f"- Материалы: массив, ЛДСП, МДФ, керамогранит, стекло; фурнитура\n"
             f"- Стили: скандинавский, лофт, минимализм, классика\n"
-            f"- Личный опыт: 'В моих проектах...', 'Я всегда задумываюсь...'\n"
+            f"- Личный опыт показывай ДЕЛОМ: «В моих проектах...», «За годы практики...», цифра или случай из проекта\n"
+            f"- АНТИ-ШТАМП: НЕ используй «Как дизайнер, я всегда...», «Я всегда задаюсь вопросом/задумываюсь» — это повторы из поста в пост\n"
             f"- Эмодзи умеренно и в тему\n"
             f"- Женский род, ТОЛЬКО по-русски, без английских слов и вкраплений, БЕЗ грамматических ошибок\n"
             f"- НЕ добавляй ссылки, НЕ пиши 'Источник'\n"
