@@ -300,6 +300,17 @@ async def _process_phone(message: Message, state: FSMContext, raw: str):
     )
 
 
+_MEASURE_CHECKLIST = (
+    "📋 <b>Как подготовиться к замеру</b> (5 минут сейчас — сэкономят час потом):\n\n"
+    "1️⃣ Освободите зону будущей мебели — достаточно доступа к стенам\n"
+    "2️⃣ Для кухни: запишите размеры крупной техники (холодильник, духовка, ПММ)\n"
+    "3️⃣ Сохраните фото интерьеров, которые нравятся — покажете дизайнеру\n"
+    "4️⃣ Вспомните, что раздражает в старой мебели — исправим на новом проекте\n"
+    "5️⃣ Определитесь с бюджетом — подберём материалы под него без сюрпризов\n\n"
+    "Замер с 3D-проектом — бесплатный и ни к чему не обязывает 🛋"
+)
+
+
 @lead_router.callback_query(MeasureForm.time, F.data.startswith("mtime:"))
 async def step_time(cb: CallbackQuery, state: FSMContext):
     await state.update_data(preferred_time=cb.data.split(":", 1)[1])
@@ -335,4 +346,9 @@ async def step_time(cb: CallbackQuery, state: FSMContext):
             InlineKeyboardButton(text="📺 Канал", url="https://t.me/abakan_mebel"),
         ]]),
     )
+    # Лид-магнит (раунд 8): чек-лист подготовки — подогревает и повышает ценность
+    try:
+        await cb.message.reply(_MEASURE_CHECKLIST)
+    except Exception as e:
+        logger.debug(f"checklist send failed: {e}")
     await cb.answer("Готово!")

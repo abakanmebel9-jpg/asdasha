@@ -62,20 +62,26 @@ async def build_report_text(days: int = 7) -> str:
 
     # Аудитория
     try:
-        conn = db._conn()
-        cur = await conn.execute("SELECT COUNT(*) AS n FROM users WHERE first_seen > ?", (week_ago,))
-        new_users = (await cur.fetchone())["n"]
-        cur = await conn.execute("SELECT COUNT(*) AS n FROM private_messages WHERE ts > ? AND role='user'", (week_ago,))
-        pm = (await cur.fetchone())["n"]
+        new_users = await db.get_new_users_since(week_ago)
+        pm = await db.get_private_msg_count_since(week_ago)
         lines.append(f"\n👥 Новые пользователи: {new_users}\n💬 Сообщений в личке: {pm}")
     except Exception as e:
         lines.append(f"👥 Аудитория: ошибка ({e})")
 
+    # Топ активных клиентов (раунд 8: с кем владелец может связаться в первую очередь)
+    try:
+        top = await db.get_top_users_since(week_ago, limit=3)
+        if top:
+            lines.append("\n🥇 Самые активные в личке:")
+            for uid, name, n in top:
+                lines.append(f"  • {name} (id {uid}) — {n} сообщ.")
+            lines.append("  Идея: персональное предложение этим — они уже тёплые.")
+    except Exception as e:
+        lines.append(f"🥇 Топ клиентов: ошибка ({e})")
+
     # Посты
     try:
-        conn = db._conn()
-        cur = await conn.execute("SELECT COUNT(*) AS n FROM posted_news WHERE posted_at > ?", (week_ago,))
-        posts = (await cur.fetchone())["n"]
+        posts = await db.get_posted_count_since(week_ago)
         lines.append(f"\n📰 Постов в канал: {posts}")
     except Exception as e:
         lines.append(f"📰 Посты: ошибка ({e})")

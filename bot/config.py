@@ -47,6 +47,8 @@ class BotConfig:
     VISUALS_ENABLED: bool = field(default_factory=lambda: _env("VISUALS_ENABLED", "1").lower() not in ("0", "false", "no", "off"))
     # Опросы «Вопрос дня» в канале
     CHANNEL_POLLS_ENABLED: bool = field(default_factory=lambda: _env("CHANNEL_POLLS_ENABLED", "1").lower() not in ("0", "false", "no", "off"))
+    # Автоуведомление о нерабочем времени в личке (Пн-Сб 09:00-20:00 Красноярск)
+    BUSINESS_HOURS_ENABLED: bool = field(default_factory=lambda: _env("BUSINESS_HOURS_ENABLED", "1").lower() not in ("0", "false", "no", "off"))
 
     CHANNEL_ID: str = field(default_factory=lambda: _env("CHANNEL_ID"))
     CHANNEL_USERNAME: str = field(default_factory=lambda: _env("CHANNEL_USERNAME", "abakan_mebel"))

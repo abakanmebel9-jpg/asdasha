@@ -55,6 +55,7 @@ _HELP_TEXT = (
     "/care — советы по уходу за мебелью 🧼\n"
     "/process — этапы работы: от заявки до гарантии 🔧\n"
     "/faq — частые вопросы ❓\n"
+    "/terms — мебельный словарь: ЛДСП, МДФ, доводчики 📖\n"
     "/fact — интересный факт о мебели\n"
     "/clear — забыть историю чата\n"
     "/mood — моё настроение\n"
@@ -174,6 +175,15 @@ async def cmd_faq(message):
     except Exception:
         await message.reply(format_faq(3)[:4000])
 
+@chat_router.message(Command("terms"))
+async def cmd_terms(message):
+    """Мебельный словарь — 4 термина за показ с ротацией, личка и группы."""
+    from bot.service_info import format_glossary
+    try:
+        await message.reply(format_glossary(4)[:4000], reply_markup=_contacts_keyboard())
+    except Exception:
+        await message.reply(format_glossary(4)[:4000])
+
 _FURNITURE_HINTS = [
     "кухн", "шкаф", "мебел", "стол", "столешниц", "фасад", "мдф", "лдсп",
     "массив", "фурнитур", "петл", "направляющ", "доводчик", "гардеробн",
@@ -194,6 +204,12 @@ async def handle_private_text(message):
     text = (message.text or "").strip()
     if not text or text.startswith("/"): return
     await db.upsert_user(u.id, u.username or "", u.first_name or "", u.last_name or "", u.is_bot, in_private=True)
+    # Нерабочее время: уведомляем об ожиданиях + ловим ночные заявки (1 раз / 6 ч)
+    try:
+        from bot.business_hours import maybe_off_hours_notice
+        await maybe_off_hours_notice(message.bot, message.chat.id, u.id)
+    except Exception as e:
+        logger.debug(f"off-hours notice failed: {e}")
     # Мгновенные ответы на типовые запросы (цена/замер/сроки...) — без AI, с кнопками
     try:
         from bot.intents import try_instant_reply

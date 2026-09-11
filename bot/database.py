@@ -228,6 +228,38 @@ async def get_total_measure_requests():
     row = await cur.fetchone()
     return int(row["n"]) if row else 0
 
+# ─── Недельная статистика (/week_stats) ─────────────────────────────────────
+
+async def get_posted_count_since(since_ts: int) -> int:
+    """Сколько ключей posted_news создано с момента since_ts (посты/опросы/пометки)."""
+    cur = await _conn().execute("SELECT COUNT(*) AS n FROM posted_news WHERE posted_at > ?", (since_ts,))
+    row = await cur.fetchone()
+    return int(row["n"]) if row else 0
+
+async def get_new_users_since(since_ts: int) -> int:
+    """Новые пользователи (first_seen) с момента since_ts."""
+    cur = await _conn().execute("SELECT COUNT(*) AS n FROM users WHERE first_seen > ? AND is_bot=0", (since_ts,))
+    row = await cur.fetchone()
+    return int(row["n"]) if row else 0
+
+async def get_private_msg_count_since(since_ts: int) -> int:
+    """Число сообщений в личке с момента since_ts (обе стороны)."""
+    cur = await _conn().execute("SELECT COUNT(*) AS n FROM private_messages WHERE ts > ?", (since_ts,))
+    row = await cur.fetchone()
+    return int(row["n"]) if row else 0
+
+async def get_top_users_since(since_ts: int, limit: int = 3):
+    """Самые активные пользователи лички с момента since_ts: [(user_id, имя, msgs)]."""
+    cur = await _conn().execute(
+        "SELECT u.user_id AS user_id, u.first_name AS first_name, u.username AS username, COUNT(*) AS n "
+        "FROM private_messages pm JOIN users u ON u.user_id = pm.user_id "
+        "WHERE pm.ts > ? AND pm.role='user' "
+        "GROUP BY pm.user_id ORDER BY n DESC LIMIT ?",
+        (since_ts, limit),
+    )
+    rows = await cur.fetchall()
+    return [(int(r["user_id"]), (r["first_name"] or r["username"] or "?"), int(r["n"])) for r in rows]
+
 # Cleanup
 async def record_donation(user_id, stars, charge_id):
     await _conn().execute("INSERT INTO donations (user_id, stars_amount, telegram_charge_id, created_at) VALUES (?,?,?,?)", (user_id, stars, charge_id, int(time.time())))
@@ -248,6 +280,12 @@ async def get_posted_ts(news_id: str) -> int:
     cur = await _conn().execute("SELECT posted_at FROM posted_news WHERE news_id=?", (news_id,))
     row = await cur.fetchone()
     return int(row["posted_at"]) if row else 0
+
+async def get_posted_title(news_id: str) -> str:
+    """Сохранённый title по ключу posted_news ('' — если нет). Используется как KV-хранилище."""
+    cur = await _conn().execute("SELECT title FROM posted_news WHERE news_id=?", (news_id,))
+    row = await cur.fetchone()
+    return (row["title"] if row else "") or ""
 
 async def get_broadcast_users():
     """Все живые пользователи, писавшие боту в личку (для массовой рассылки)."""

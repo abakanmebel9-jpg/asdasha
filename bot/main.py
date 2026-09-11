@@ -91,21 +91,65 @@ _CITY_TAGS = ["#Абакан", "#мебельназаказ", "#мебельАб
 # Анти-повтор: не показывать два раза подряд один и тот же набор тегов
 _hashtag_state = {"last": frozenset()}
 
-def _add_topic_hashtags(text: str, topic: str = "") -> str:
+# Раунд 8: скользящее окно недавно использованных тегов (не только подряд).
+# Персистентно: JSON в posted_news под ключом hashtag:recent (переживает рестарт).
+import json as _json
+from collections import deque as _deque
+_HTAG_KEY = "hashtag:recent"
+_HTAG_WINDOW = 12
+_hashtag_recent = {"tags": _deque(maxlen=_HTAG_WINDOW), "loaded": False}
+
+
+async def _load_hashtag_recent() -> None:
+    if _hashtag_recent["loaded"]:
+        return
+    _hashtag_recent["loaded"] = True
+    try:
+        raw = await db.get_posted_title(_HTAG_KEY)
+        if raw:
+            for t in _json.loads(raw):
+                if isinstance(t, str) and t not in _hashtag_recent["tags"]:
+                    _hashtag_recent["tags"].append(t)
+    except Exception as e:
+        logger.debug(f"hashtag recent load failed: {e}")
+
+
+async def _save_hashtag_recent() -> None:
+    try:
+        await db.mark_news_posted(_HTAG_KEY, _json.dumps(list(_hashtag_recent["tags"]), ensure_ascii=False))
+    except Exception as e:
+        logger.debug(f"hashtag recent save failed: {e}")
+
+
+def _remember_tags(tags) -> None:
+    for t in tags:
+        if t and t not in _hashtag_recent["tags"]:
+            _hashtag_recent["tags"].append(t)
+
+
+async def _add_topic_hashtags(text: str, topic: str = "") -> str:
     """Добавляет 2-3 хештега: тематические + городской тег.
 
-    Защита от однообразия: тот же набор, что и в прошлом посте, не повторяется —
-    тематический тег заменяется альтернативой. Теги самого AI не трогаем.
+    Защита от однообразия (раунд 8): скользящее окно последних 12 тегов —
+    при выборе тематических предпочитаем НЕ использованные недавно.
+    Теги самого AI не трогаем, но запоминаем их в окно (чтобы системные
+    теги следующих постов не дублировали их).
     """
+    await _load_hashtag_recent()
     if "#" in text:
+        _remember_tags(re.findall(r"#[\wа-яё]+", text, flags=re.IGNORECASE))
+        await _save_hashtag_recent()
         return text
     combined = f"{topic} {text}".lower()
-    tags = []
-    for keywords, tag in _TOPIC_HASHTAGS:
-        if any(kw in combined for kw in keywords):
-            tags.append(tag)
-        if len(tags) >= 2:
-            break
+    matched = [tag for keywords, tag in _TOPIC_HASHTAGS if any(kw in combined for kw in keywords)]
+    # 1) свежие теги (не из окна) — приоритет; 2) если их меньше двух — добираем из совпавших
+    tags = [t for t in matched if t not in _hashtag_recent["tags"]][:2]
+    if len(tags) < 2:
+        for t in matched:
+            if t not in tags:
+                tags.append(t)
+            if len(tags) >= 2:
+                break
     # Городской тег — всегда (локальный поиск: «кухни Абакан»)
     tags.append("#Абакан")
     # Анти-повтор набора подряд
@@ -119,6 +163,8 @@ def _add_topic_hashtags(text: str, topic: str = "") -> str:
             tags.insert(0, replacement)
             tags = tags[:3]
     _hashtag_state["last"] = frozenset(tags)
+    _remember_tags(tags)
+    await _save_hashtag_recent()
     return text.rstrip() + "\n\n" + " ".join(tags[:3])
 
 def _extract_hashtags(text: str) -> str:
@@ -187,10 +233,61 @@ def _clean_pipeline(raw: str) -> str:
     return t
 
 
+# ─── Анти-повтор хуков (раунд 8) ────────────────────────────────────────────
+# AI штампует однотипные зачины («Мечтаете о…», «Может ли…» — по 2-3 поста
+# подряд в истории канала). Запоминаем первые слова последних 8 хуков;
+# при совпадении с любым из них первое предложение срезается целиком —
+# пост начинается с сути, а не с клона.
+
+from collections import deque as _hook_deque
+_hook_recent = _hook_deque(maxlen=8)
+_HOOK_EMOJI_RE = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF]")
+
+
+def _hook_fingerprint(text: str) -> str:
+    """Первые 2 слова первой строки поста (lowercase, без эмодзи/пунктуации)."""
+    if not text:
+        return ""
+    first_line = next((ln.strip() for ln in text.split("\n") if ln.strip()), "")
+    clean = _HOOK_EMOJI_RE.sub("", first_line)
+    clean = re.sub(r"[^\w\sа-яё]", "", clean.lower(), flags=re.IGNORECASE).strip()
+    words = [w for w in clean.split() if len(w) > 1]
+    return " ".join(words[:2])
+
+
+def _strip_first_sentence(text: str) -> str:
+    """Срезает первое предложение целиком (механика banned openings)."""
+    for i, ch in enumerate(text[:400]):
+        if ch in ".!?" and (i + 1 >= len(text) or text[i + 1] in " \n"):
+            stripped = text[i + 1:].lstrip(" \n")
+            if len(stripped) >= 250:
+                return stripped
+            break  # срез сделает пост короче минимума — оставляем как есть
+    return text
+
+
+def _dedupe_hook(text: str) -> str:
+    """Если хук-зачин повторяет недавний — срезаем его; в любом случае запоминаем."""
+    if not text:
+        return text
+    fp = _hook_fingerprint(text)
+    if not fp:
+        return text
+    if fp in _hook_recent:
+        before = text
+        text = _strip_first_sentence(text)
+        if text != before:
+            logger.info(f"Hook dedup: repeat opening «{fp}» — first sentence stripped")
+    fp2 = _hook_fingerprint(text)
+    if fp2 and fp2 not in _hook_recent:
+        _hook_recent.append(fp2)
+    return text
+
+
 async def _generate_channel_post(prompt: str, channel_prompt: str, post_type: str = "") -> str:
     """Генерация поста канала с 1 retry: если структура оборвана/размыта — повтор с компактным лимитом.
 
-    Возвращает ГОТОВЫЙ чистый текст (clean→enforce→polish→finish) или "".
+    Возвращает ГОТОВЫЙ чистый текст (clean→enforce→polish→finish→hook-dedupe) или "".
     """
     first = ""
     for attempt in range(2):
@@ -202,7 +299,7 @@ async def _generate_channel_post(prompt: str, channel_prompt: str, post_type: st
         if not raw:
             logger.warning(f"Post generation attempt {attempt+1}: empty response")
             continue
-        text = _clean_pipeline(raw)
+        text = _dedupe_hook(_clean_pipeline(raw))
         if len(text) >= 250 and not _is_structurally_incomplete(text, post_type):
             return text
         if attempt == 0:
@@ -385,6 +482,7 @@ class DashaBot:
                 BotCommand(command="faq", description="Частые вопросы ❓"),
                 BotCommand(command="process", description="Этапы работы 🔧"),
                 BotCommand(command="care", description="Уход за мебелью 🧼"),
+                BotCommand(command="terms", description="Мебельный словарь 📖"),
                 BotCommand(command="fact", description="Факт о мебели 💡"),
             ]
             private_cmds = public_cmds + [
@@ -605,7 +703,9 @@ class DashaBot:
             f"материалы (массив, ЛДСП, МДФ), фурнитура, размеры, ошибки клиентов.{kb_block}\n\n"
             f"Требования: 600-900 знаков, живо, с эмодзи в тему, 1-2 хештега в конце, "
             f"вопрос аудитории в самом конце. Женский род. Только по-русски, БЕЗ английских слов. "
-            f"ПЕРВАЯ строка-хук — строго о теме «{topic[:80]}», без посторонних клише."
+            f"ПЕРВАЯ строка-хук — строго о теме «{topic[:80]}», без посторонних клише. "
+            f"НЕ начинай с «Мечтаете о…» и «Может ли…» — это заезженные шаблоны; "
+            f"варьируй: интригующее утверждение, неожиданный факт/цифра, мини-история из проекта."
             f"{_FORMAT_COMPLIANCE}"
         )
         ai_text = await _generate_channel_post(prompt, CHANNEL_POST_PROMPT, ptype)
@@ -616,7 +716,7 @@ class DashaBot:
         if not is_valid or len(ai_text) < 250:
             logger.warning(f"AI fallback topic validation FAILED ({reason}, len={len(ai_text)}) — {topic[:40]}")
             return False
-        ai_text = _add_topic_hashtags(ai_text, topic)
+        ai_text = await _add_topic_hashtags(ai_text, topic)
         ai_text = _style_channel_post(ai_text)
 
         footer = build_channel_footer()
@@ -730,7 +830,7 @@ class DashaBot:
             f"{kb_block}"
             f"\n\n{UNIQUIFICATION_RULES}\n\n"
             f"ОБЯЗАТЕЛЬНО:\n"
-            f"1. Хук — вопрос/интригующее утверждение СТРОГО по теме новости «{title[:80]}» (НЕ «Сегодня хочу поделиться», не «Сегодня я расскажу» и не посторонние клише)\n"
+            f"1. Хук — вопрос/интригующее утверждение СТРОГО по теме новости «{title[:80]}» (НЕ «Сегодня хочу поделиться», не «Сегодня я расскажу», не «Мечтаете о…», не «Может ли…» — это заезженные шаблоны; варьируй: факт, цифра, мини-история, провокационное утверждение)\n"
             f"2. Экспертный разбор: {length_req} от первого лица, личный опыт\n"
             f"3. Вывод-совет + вопрос аудитории + 1-2 хештега ОТДЕЛЬНОЙ строкой в самом конце\n\n"
             f"СТИЛЬ (как пишет Даша):\n"
@@ -771,7 +871,7 @@ class DashaBot:
             return False
 
         # Хештеги по теме, если AI их не добавил
-        ai_text = _add_topic_hashtags(ai_text, title)
+        ai_text = await _add_topic_hashtags(ai_text, title)
 
         # Text fingerprint dedup (по видимому тексту, до HTML-стилизации)
         fp = text_fingerprint(ai_text)
