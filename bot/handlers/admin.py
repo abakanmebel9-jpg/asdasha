@@ -154,6 +154,16 @@ async def cb_broadcast(callback):
         await status.edit_text(f"✅ Рассылка завершена: доставлено {sent}, не доставлено {failed}.")
     except Exception: pass
 
+@admin_router.message(Command("pin_info"))
+async def cmd_pin_info(message):
+    """Повторная публикация + закреп поста «Как заказать» в канале."""
+    if not _is_admin(message): return
+    if not config.CHANNEL_ID:
+        await message.reply("CHANNEL_ID не настроен."); return
+    from bot.channel_pin import ensure_pinned_info
+    ok = await ensure_pinned_info(message.bot, int(config.CHANNEL_ID), force=True)
+    await message.reply("✅ Закреп опубликован и закреплён." if ok else "❌ Не удалось — смотри логи.")
+
 @admin_router.message(Command("post_now"))
 async def cmd_post_now(message):
     """Форс-пост в канал: будит шедулер немедленно (антифлуд 60 сек)."""

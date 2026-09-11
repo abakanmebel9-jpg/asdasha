@@ -244,6 +244,7 @@ from bot.handlers.inline import inline_router
 from bot.quiz import quiz_router
 from bot.calculator import calc_router
 from bot.lead_forms import lead_router
+from bot.inspiration import inspiration_router
 
 OPENCLAW_STATE_DIR = os.getenv("OPENCLAW_STATE_DIR", str(Path.cwd() / ".openclaw-state"))
 _openclaw_proc = None
@@ -303,6 +304,7 @@ class DashaBot:
         self.dp.include_router(lead_router)
         self.dp.include_router(quiz_router)
         self.dp.include_router(calc_router)
+        self.dp.include_router(inspiration_router)
         self.dp.include_router(chat_router)
         self.dp.include_router(group_router)
         self.dp.include_router(channel_router)
@@ -349,10 +351,22 @@ class DashaBot:
             asyncio.create_task(weekly_report_loop(self.bot), name="weekly_report_loop")
             logger.info("Weekly report loop enabled (Mon 09:00 Asia/Krasnoyarsk)")
         except Exception as e: logger.warning(f"Weekly report loop failed: {e}")
+        # Follow-up заявкам на замер (24 ч, окно 10–20 по Абакану)
+        try:
+            from bot.lead_followup import lead_followup_loop
+            asyncio.create_task(lead_followup_loop(self.bot), name="lead_followup_loop")
+            logger.info("Lead follow-up loop enabled (24h check-in)")
+        except Exception as e: logger.warning(f"Lead follow-up loop failed: {e}")
         # Furniture Channel scheduler — Даша posts to @abakan_mebel
         if config.CHANNEL_ID:
             asyncio.create_task(self._channel_scheduler(), name="channel_scheduler")
             logger.info(f"Channel scheduler enabled (@{config.CHANNEL_USERNAME})")
+            # Закреплённый пост «Как заказать» (однократно; повтор — /pin_info)
+            try:
+                from bot.channel_pin import ensure_pinned_info
+                await ensure_pinned_info(self.bot, int(config.CHANNEL_ID))
+            except Exception as e:
+                logger.warning(f"Channel pin failed: {e}")
         await self._notify_owner()
         try: await self.bot.delete_webhook(drop_pending_updates=True)
         except: pass
@@ -366,6 +380,7 @@ class DashaBot:
                 BotCommand(command="catalog", description="Каталог решений с ценами 🛋"),
                 BotCommand(command="price", description="Ориентиры по ценам 💰"),
                 BotCommand(command="quiz", description="Квиз «Подбери мебель» 🧩"),
+                BotCommand(command="inspiration", description="Вдохновение с примерами 🎨"),
                 BotCommand(command="reviews", description="Отзывы клиентов ⭐"),
                 BotCommand(command="faq", description="Частые вопросы ❓"),
                 BotCommand(command="process", description="Этапы работы 🔧"),
