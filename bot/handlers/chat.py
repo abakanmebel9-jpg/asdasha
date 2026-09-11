@@ -51,6 +51,9 @@ _HELP_TEXT = (
     "/price — ориентиры по ценам\n"
     "/quiz — квиз «Подбери свою мебель» 🧩\n"
     "/reviews — отзывы клиентов ⭐\n"
+    "/care — советы по уходу за мебелью 🧼\n"
+    "/process — этапы работы: от заявки до гарантии 🔧\n"
+    "/faq — частые вопросы ❓\n"
     "/fact — интересный факт о мебели\n"
     "/clear — забыть историю чата\n"
     "/mood — моё настроение\n"
@@ -142,6 +145,33 @@ async def cmd_reviews(message):
         await message.reply(text[:4000], reply_markup=_contacts_keyboard())
     except Exception:
         await message.reply(text[:4000])
+
+@chat_router.message(Command("care"))
+async def cmd_care(message):
+    """Совет по уходу за мебелью — 1 за вызов с ротацией, личка и группы."""
+    from bot.service_info import format_care
+    try:
+        await message.reply(format_care()[:4000], reply_markup=_contacts_keyboard())
+    except Exception:
+        await message.reply(format_care()[:4000])
+
+@chat_router.message(Command("process"))
+async def cmd_process(message):
+    """Этапы работы — личка и группы."""
+    from bot.service_info import format_process
+    try:
+        await message.reply(format_process()[:4000], reply_markup=_contacts_keyboard())
+    except Exception:
+        await message.reply(format_process()[:4000])
+
+@chat_router.message(Command("faq"))
+async def cmd_faq(message):
+    """Частые вопросы — 3 за показ с ротацией, личка и группы."""
+    from bot.service_info import format_faq
+    try:
+        await message.reply(format_faq(3)[:4000], reply_markup=_contacts_keyboard())
+    except Exception:
+        await message.reply(format_faq(3)[:4000])
 
 _FURNITURE_HINTS = [
     "кухн", "шкаф", "мебел", "стол", "столешниц", "фасад", "мдф", "лдсп",

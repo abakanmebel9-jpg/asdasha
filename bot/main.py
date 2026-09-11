@@ -15,7 +15,7 @@ from bot.post_utils import (
     finish_sentences,
 )
 from bot.text_polish import polish_grammar, linkify_contacts, dedupe_contacts, stylize_post_html
-from bot.post_types import get_type_block
+from bot.post_types import get_type_block, last_post_type
 from bot.post_context import time_of_day_profile, seasonal_context
 
 logging.basicConfig(level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO), format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
@@ -68,20 +68,35 @@ def build_channel_footer() -> str:
         f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
     )
 
-# Хештеги по ключевым словам темы (для постов без хештегов)
+# Хештеги по ключевым словам темы (для постов без хештегов).
+# Порядок важен: более специфичные темы — раньше общих.
 _TOPIC_HASHTAGS = [
-    (["кухн"], "#кухни"),
-    (["шкаф", "купе", "гардероб"], "#шкафы"),
-    (["прихож", "коридор"], "#прихожая"),
-    (["мдф", "лдсп", "массив", "материал", "кромк"], "#материалы"),
-    (["дизайн", "интерьер", "стил", "тренд", "цвет"], "#дизайнинтерьера"),
-    (["фурнитур", "петл", "доводчик", "направляющ"], "#фурнитура"),
     (["столешниц"], "#столешницы"),
+    (["фурнитур", "петл", "доводчик", "направляющ"], "#фурнитура"),
+    (["гардероб"], "#гардеробная"),
+    (["купе"], "#шкафыкупе"),
+    (["шкаф"], "#шкафы"),
+    (["кухн"], "#кухни"),
+    (["прихож", "коридор"], "#прихожая"),
     (["влаж", "ванн", "уход", "мыть"], "#уход"),
+    (["мдф", "лдсп", "массив", "материал", "кромк", "фасад"], "#материалы"),
+    (["дизайн", "интерьер", "стил", "тренд", "цвет"], "#дизайнинтерьера"),
+    (["освещ", "подсветк"], "#освещение"),
+    (["хранен", "порядок", "организац"], "#хранение"),
 ]
 
+# Городские теги для локального SEO: Абакан / Хакасия / Черногорск
+_CITY_TAGS = ["#Абакан", "#мебельназаказ", "#мебельАбакан"]
+
+# Анти-повтор: не показывать два раза подряд один и тот же набор тегов
+_hashtag_state = {"last": frozenset()}
+
 def _add_topic_hashtags(text: str, topic: str = "") -> str:
-    """Добавляет до 2 релевантных хештега, если в тексте их ещё нет."""
+    """Добавляет 2-3 хештега: тематические + городской тег.
+
+    Защита от однообразия: тот же набор, что и в прошлом посте, не повторяется —
+    тематический тег заменяется альтернативой. Теги самого AI не трогаем.
+    """
     if "#" in text:
         return text
     combined = f"{topic} {text}".lower()
@@ -91,9 +106,20 @@ def _add_topic_hashtags(text: str, topic: str = "") -> str:
             tags.append(tag)
         if len(tags) >= 2:
             break
-    if not tags:
-        tags = ["#мебельназаказ"]
-    return text.rstrip() + "\n\n" + " ".join(tags)
+    # Городской тег — всегда (локальный поиск: «кухни Абакан»)
+    tags.append("#Абакан")
+    # Анти-повтор набора подряд
+    if frozenset(tags) == _hashtag_state["last"]:
+        # Пробуем другую тематическую пару из той же сферы или общий тег
+        alt = [t for _, t in _TOPIC_HASHTAGS if t not in tags]
+        replacement = alt[0] if alt else _CITY_TAGS[-1]
+        if tags and tags[0] not in _CITY_TAGS:
+            tags[0] = replacement
+        else:
+            tags.insert(0, replacement)
+            tags = tags[:3]
+    _hashtag_state["last"] = frozenset(tags)
+    return text.rstrip() + "\n\n" + " ".join(tags[:3])
 
 def _extract_hashtags(text: str) -> str:
     """Извлекает хештеги из текста одной строкой (для повторной приклейки)."""
@@ -107,28 +133,48 @@ def _visible_len(html_text: str) -> int:
     return len(_h.unescape(re.sub(r"<[^>]+>", "", html_text or "")))
 
 
-def _is_structurally_incomplete(text: str) -> bool:
-    """Оборван ли структурный тип поста (сравнение/миф/чек-лист) посреди формата.
+def _is_structurally_incomplete(text: str, post_type: str = "") -> bool:
+    """Оборван/размыт ли структурный тип поста посреди формата.
 
-    Провайдер иногда срезает ответ даже при max_tokens=1200 — тогда
-    «Вариант 1» есть, а «Вариант 2» не успел появиться. Такой пост
-    выглядит целым (finish_sentences), но сравнение неполное.
+    Два кейса:
+    1) Провайдер срезал ответ: «Вариант 1» есть, «Вариант 2» не появился.
+    2) AI проигнорировал формат: сравнение написано сплошной прозой БЕЗ
+       обязательных лейблов — стилизация нечего выделить, пост теряет структуру.
     """
     t = text or ""
     has_v1 = ("Вариант 1" in t) or ("🅰" in t)
     has_v2 = ("Вариант 2" in t) or ("🅱" in t)
+    # Обрыв: первый вариант есть, второго нет
     if has_v1 and not has_v2:
         return True
     if "Миф:" in t and "Правда:" not in t:
         return True
     if "Что было:" in t and "Что получилось:" not in t:
         return True
+    # Игнор формата по типу поста: обязательные лейблы отсутствуют ЦЕЛИКОМ
+    if post_type == "compare" and not (has_v1 or has_v2):
+        return True
+    if post_type == "myth" and ("Миф" not in t or "Правда" not in t):
+        return True
+    if post_type == "transformation" and "Что было" not in t:
+        return True
+    if post_type == "checklist" and not any(m in t for m in ("✅", "❌", "📌")):
+        return True
     return False
 
 
 _RETRY_SUFFIX = (
     "\n\nКОНТРОЛЬ ДЛИНЫ (важно): твой предыдущий ответ был оборван. "
-    "Пиши МАКСИМУМ 550 знаков: сжато, без воды, но СО ВСЕМИ структурными элементами формата."
+    "Пиши МАКСИМУМ 650 знаков: сжато, без воды, но СО ВСЕМИ структурными элементами формата "
+    "(лейблы «Вариант 1:»/«Вариант 2:», «Миф:»/«Правда:» и т.п. — каждый с новой строки)."
+)
+
+# Требование соблюдения формата типа поста (добавляется в оба постовых промпта)
+_FORMAT_COMPLIANCE = (
+    "\n\nФОРМАТ (обязательно): если в типе поста указаны строки-лейблы "
+    "(«🅰 Вариант 1:» и «🅱 Вариант 2:», «Миф:» и «Правда:», «📸 Что было:», «🔧 Что сделали:», "
+    "«✨ Что получилось:», пункты чек-листа ✅/❌/📌) — пиши эти лейблы ДОСЛОВНО, каждый блок С НОВОЙ строки. "
+    "Не превращай структуру в сплошную прозу."
 )
 
 
@@ -141,8 +187,8 @@ def _clean_pipeline(raw: str) -> str:
     return t
 
 
-async def _generate_channel_post(prompt: str, channel_prompt: str) -> str:
-    """Генерация поста канала с 1 retry: если структура оборвана — повтор с компактным лимитом.
+async def _generate_channel_post(prompt: str, channel_prompt: str, post_type: str = "") -> str:
+    """Генерация поста канала с 1 retry: если структура оборвана/размыта — повтор с компактным лимитом.
 
     Возвращает ГОТОВЫЙ чистый текст (clean→enforce→polish→finish) или "".
     """
@@ -157,10 +203,10 @@ async def _generate_channel_post(prompt: str, channel_prompt: str) -> str:
             logger.warning(f"Post generation attempt {attempt+1}: empty response")
             continue
         text = _clean_pipeline(raw)
-        if len(text) >= 250 and not _is_structurally_incomplete(text):
+        if len(text) >= 250 and not _is_structurally_incomplete(text, post_type):
             return text
         if attempt == 0:
-            logger.info(f"Post structurally incomplete (len={len(text)}) — retrying compact")
+            logger.info(f"Post structurally incomplete (len={len(text)}, type={post_type or '?'}) — retrying compact")
             first = text if len(text) > len(first) else first
         else:
             return text if len(text) >= 250 else (first if len(first) >= 250 else "")
@@ -297,6 +343,12 @@ class DashaBot:
             asyncio.create_task(summary_loop(), name="summary_loop")
             logger.info("Proactive + summary loops enabled")
         except Exception as e: logger.warning(f"Proactive failed: {e}")
+        # Еженедельная сводка владельцу — понедельник 09:00 по Абакану
+        try:
+            from bot.weekly_report import weekly_report_loop
+            asyncio.create_task(weekly_report_loop(self.bot), name="weekly_report_loop")
+            logger.info("Weekly report loop enabled (Mon 09:00 Asia/Krasnoyarsk)")
+        except Exception as e: logger.warning(f"Weekly report loop failed: {e}")
         # Furniture Channel scheduler — Даша posts to @abakan_mebel
         if config.CHANNEL_ID:
             asyncio.create_task(self._channel_scheduler(), name="channel_scheduler")
@@ -315,6 +367,9 @@ class DashaBot:
                 BotCommand(command="price", description="Ориентиры по ценам 💰"),
                 BotCommand(command="quiz", description="Квиз «Подбери мебель» 🧩"),
                 BotCommand(command="reviews", description="Отзывы клиентов ⭐"),
+                BotCommand(command="faq", description="Частые вопросы ❓"),
+                BotCommand(command="process", description="Этапы работы 🔧"),
+                BotCommand(command="care", description="Уход за мебелью 🧼"),
                 BotCommand(command="fact", description="Факт о мебели 💡"),
             ]
             private_cmds = public_cmds + [
@@ -507,12 +562,13 @@ class DashaBot:
         """
         from bot.persona import CHANNEL_POST_PROMPT
         from bot.post_utils import clean_post_text, title_fingerprint
-        from bot.post_types import get_type_block
+        from bot.post_types import get_type_block, last_post_type
         from bot.post_context import time_of_day_profile, seasonal_context
         from aiogram.enums import ParseMode
 
         kb_block = _furniture_knowledge_block(topic)
         type_block = get_type_block()
+        ptype = last_post_type()
         tod_label, tod_block = time_of_day_profile()
         season = seasonal_context()
         season_block = f"\nСезонный контекст: {season}." if season else ""
@@ -525,8 +581,9 @@ class DashaBot:
             f"материалы (массив, ЛДСП, МДФ), фурнитура, размеры, ошибки клиентов.{kb_block}\n\n"
             f"Требования: 600-900 знаков, живо, с эмодзи в тему, 1-2 хештега в конце, "
             f"вопрос аудитории в самом конце. Женский род. Только по-русски, БЕЗ английских слов."
+            f"{_FORMAT_COMPLIANCE}"
         )
-        ai_text = await _generate_channel_post(prompt, CHANNEL_POST_PROMPT)
+        ai_text = await _generate_channel_post(prompt, CHANNEL_POST_PROMPT, ptype)
         if not ai_text:
             logger.warning("AI fallback topic: empty/incomplete response")
             return False
@@ -606,6 +663,7 @@ class DashaBot:
         # Generate AI commentary (NO translation — furniture news is already in Russian)
         kb_block = _furniture_knowledge_block(f"{title} {summary}")
         type_block = get_type_block()
+        ptype = last_post_type()
         tod_label, tod_block = time_of_day_profile()
         season = seasonal_context()
         season_block = f"\nСезонный контекст: {season}." if season else ""
@@ -632,8 +690,9 @@ class DashaBot:
             f"- НЕ добавляй ссылки, НЕ пиши 'Источник'\n"
             f"- НЕ начинай с 'Даша:'\n"
             f"- НЕ предлагай звонки/встречи/записи (это добавит редакция отдельно)"
+            f"{_FORMAT_COMPLIANCE}"
         )
-        ai_commentary = await _generate_channel_post(prompt, channel_prompt)
+        ai_commentary = await _generate_channel_post(prompt, channel_prompt, ptype)
 
         if not ai_commentary:
             logger.warning("AI commentary empty/incomplete — will retry this news next cycle")

@@ -83,3 +83,12 @@ def get_type_block(post_type: Optional[str] = None) -> str:
     block = POST_TYPES.get(t, POST_TYPES["expert"])
     logger.info(f"Post type selected: {t}")
     return block
+
+
+def last_post_type() -> str:
+    """Тип, выбранный последним вызовом get_type_block()/pick_post_type().
+
+    Нужен для типовых проверок структурной целостности (_is_structurally_incomplete):
+    сравнение без «Вариант 1/2», миф без «Правда:» и т.п.
+    """
+    return _state.get("last") or "expert"
