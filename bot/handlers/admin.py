@@ -14,6 +14,9 @@ def _is_admin(message):
     uid = message.from_user.id if message.from_user else 0
     return uid == config.OWNER_ID or uid in config.ADMIN_IDS
 
+def _is_admin_id(uid):
+    return uid == config.OWNER_ID or uid in config.ADMIN_IDS
+
 @admin_router.message(Command("stats"))
 async def cmd_stats(message):
     if not _is_admin(message): return
@@ -81,15 +84,75 @@ async def cmd_channel_off(message):
 
 @admin_router.message(Command("broadcast"))
 async def cmd_broadcast(message):
+    """Рассылка. /broadcast <текст> — всем пользователям бота (с подтверждением).
+    /broadcast <chat_id> <текст> — одиночная отправка (старый синтаксис)."""
     if not _is_admin(message): return
-    parts = (message.text or "").split(maxsplit=2)
-    if len(parts) < 3: await message.reply("Использование: /broadcast <chat_id> <текст>"); return
-    try: chat_id = int(parts[1])
-    except: await message.reply("chat_id должен быть числом"); return
+    raw = message.text or ""
+    # Legacy: одиночная отправка по chat_id
+    import re as _re
+    m = _re.match(r"/broadcast\s+(-?\d+)\s+(.+)", raw, _re.DOTALL)
+    if m:
+        try:
+            await message.bot.send_message(int(m.group(1)), m.group(2))
+            await message.reply("✅ Отправлено")
+        except Exception as e:
+            await message.reply(f"❌ Ошибка: {e}")
+        return
+    parts = raw.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.reply(
+            "Использование: /broadcast <текст>\n\n"
+            "Отправит сообщение всем, кто писал боту в личку. "
+            "Перед отправкой спросит подтверждение."
+        )
+        return
+    payload = parts[1].strip()[:3900]
+    n = len(await db.get_broadcast_users())
+    if n == 0:
+        await message.reply("Пока некому рассылать — в базе нет пользователей, писавших боту.")
+        return
+    _pending_broadcasts[message.from_user.id] = payload
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"✅ Отправить всем ({n})", callback_data="broadcast:go"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast:no"),
+    ]])
+    await message.reply(
+        f"📤 Рассылка для {n} пользователей:\n\n{payload[:500]}{'…' if len(payload) > 500 else ''}\n\nОтправляем?",
+        reply_markup=kb,
+    )
+
+_pending_broadcasts = {}  # admin_id → текст рассылки
+
+@admin_router.callback_query(F.data.startswith("broadcast:"))
+async def cb_broadcast(callback):
+    if not _is_admin_id(callback.from_user.id):
+        await callback.answer("Только для админа", show_alert=True); return
+    action = (callback.data or ":").split(":", 1)[1]
+    payload = _pending_broadcasts.pop(callback.from_user.id, "")
+    if action != "go" or not payload:
+        try: await callback.message.edit_text("❌ Рассылка отменена.")  # type: ignore
+        except Exception: pass
+        await callback.answer()
+        return
+    await callback.answer("🚀 Запускаю рассылку…")
+    users = await db.get_broadcast_users()
+    status = await callback.message.edit_text(f"📤 Начинаю рассылку: {len(users)} получателей…")  # type: ignore
+    sent = failed = 0
+    import asyncio as _a
+    for i, uid in enumerate(users, 1):
+        try:
+            await callback.bot.send_message(uid, payload)
+            sent += 1
+        except Exception:
+            failed += 1
+        if i % 10 == 0:
+            try: await status.edit_text(f"📤 Отправлено {i}/{len(users)} (✅ {sent}, ❌ {failed})")
+            except Exception: pass
+        await _a.sleep(0.08)  # ~12 сообщ/сек — безопасно под лимитом 30/с
     try:
-        await message.bot.send_message(chat_id, parts[2])
-        await message.reply("✅ Отправлено")
-    except Exception as e: await message.reply(f"❌ Ошибка: {e}")
+        await status.edit_text(f"✅ Рассылка завершена: доставлено {sent}, не доставлено {failed}.")
+    except Exception: pass
 
 @admin_router.message(Command("post_now"))
 async def cmd_post_now(message):

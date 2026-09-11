@@ -193,6 +193,16 @@ async def handle_private_text(message):
     text = (message.text or "").strip()
     if not text or text.startswith("/"): return
     await db.upsert_user(u.id, u.username or "", u.first_name or "", u.last_name or "", u.is_bot, in_private=True)
+    # Мгновенные ответы на типовые запросы (цена/замер/сроки...) — без AI, с кнопками
+    try:
+        from bot.intents import try_instant_reply
+        instant = await try_instant_reply(message.bot, message.chat.id, u.id, text)
+        if instant:
+            await db.add_private_message(u.id, "user", text)
+            await db.add_private_message(u.id, "assistant", instant)
+            return
+    except Exception as e:
+        logger.debug(f"intents check failed: {e}")
     await update_mood_from_message(text)
     mood = await current_mood_descriptor()
     name = u.first_name or u.username or ""

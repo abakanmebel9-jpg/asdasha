@@ -243,6 +243,27 @@ async def is_news_posted(news_id: str) -> bool:
     cur = await _conn().execute("SELECT 1 FROM posted_news WHERE news_id=?", (news_id,))
     return await cur.fetchone() is not None
 
+async def get_posted_ts(news_id: str) -> int:
+    """Время последней пометки по ключу (0 — если не отмечено)."""
+    cur = await _conn().execute("SELECT posted_at FROM posted_news WHERE news_id=?", (news_id,))
+    row = await cur.fetchone()
+    return int(row["posted_at"]) if row else 0
+
+async def get_broadcast_users():
+    """Все живые пользователи, писавшие боту в личку (для массовой рассылки)."""
+    cur = await _conn().execute("SELECT user_id FROM users WHERE is_bot=0 AND private_msgs>0 ORDER BY last_seen DESC")
+    return [int(r["user_id"]) for r in await cur.fetchall()]
+
+async def delete_posted_keys(prefix: str, exclude: str = "") -> int:
+    """Удаляет ключи posted_news с заданным префиксом (кроме exclude).
+    Возвращает число удалённых."""
+    cur = await _conn().execute(
+        "DELETE FROM posted_news WHERE news_id LIKE ? AND news_id != ?",
+        (prefix + "%", exclude),
+    )
+    await _conn().commit()
+    return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
 async def mark_news_posted(news_id: str, title: str = "") -> None:
     await _conn().execute("INSERT OR IGNORE INTO posted_news(news_id, title, posted_at) VALUES(?,?,?)", (news_id, title[:200], int(time.time())))
     await _conn().commit()

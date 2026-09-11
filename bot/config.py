@@ -43,6 +43,11 @@ class BotConfig:
     # Источник мебельных новостей для автопостинга в канал
     NEWS_URL: str = field(default_factory=lambda: _env("NEWS_URL", "https://raw.githubusercontent.com/abakanmebel9-jpg/par/main/data/furniture-news.json"))
 
+    # AI-визуалы для канала (генерация картинок по теме поста через Pollinations)
+    VISUALS_ENABLED: bool = field(default_factory=lambda: _env("VISUALS_ENABLED", "1").lower() not in ("0", "false", "no", "off"))
+    # Опросы «Вопрос дня» в канале
+    CHANNEL_POLLS_ENABLED: bool = field(default_factory=lambda: _env("CHANNEL_POLLS_ENABLED", "1").lower() not in ("0", "false", "no", "off"))
+
     CHANNEL_ID: str = field(default_factory=lambda: _env("CHANNEL_ID"))
     CHANNEL_USERNAME: str = field(default_factory=lambda: _env("CHANNEL_USERNAME", "abakan_mebel"))
     PHONE: str = field(default_factory=lambda: _env("PHONE", "+7 (913) 448-37-17"))

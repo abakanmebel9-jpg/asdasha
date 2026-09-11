@@ -165,7 +165,7 @@ def _is_structurally_incomplete(text: str, post_type: str = "") -> bool:
 
 _RETRY_SUFFIX = (
     "\n\nКОНТРОЛЬ ДЛИНЫ (важно): твой предыдущий ответ был оборван. "
-    "Пиши МАКСИМУМ 650 знаков: сжато, без воды, но СО ВСЕМИ структурными элементами формата "
+    "Пиши МАКСИМУМ 700 знаков: сжато, без воды, но СО ВСЕМИ структурными элементами формата "
     "(лейблы «Вариант 1:»/«Вариант 2:», «Миф:»/«Правда:» и т.п. — каждый с новой строки)."
 )
 
@@ -543,6 +543,14 @@ class DashaBot:
                 elif not posted:
                     logger.info(f"Cycle complete: no posts from {len(candidates)} candidates")
 
+                # Опрос «Вопрос дня» (не чаще ~раза в 4 ч, шанс 40%) — после поста
+                if config.CHANNEL_POLLS_ENABLED:
+                    try:
+                        from bot import polls
+                        await polls.maybe_send_poll(self.bot, channel_id)
+                    except Exception as e:
+                        logger.warning(f"Poll step failed: {e}")
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -558,10 +566,11 @@ class DashaBot:
         """Генерирует и публикует пост на заданную мебельную тему (fallback без новости).
 
         Пайплайн: AI → clean → polish → validate → min-quality → hashtags →
-        HTML-пост с футером → реакции. Пометки fb: в БД против повторов.
+        визуал по теме (AI-генерация, если включён) → фото-пост с подписью
+        ИЛИ текст-пост с футером → реакции. Пометки fb: в БД против повторов.
         """
         from bot.persona import CHANNEL_POST_PROMPT
-        from bot.post_utils import clean_post_text, title_fingerprint
+        from bot.post_utils import clean_post_text, title_fingerprint, smart_truncate_html
         from bot.post_types import get_type_block, last_post_type
         from bot.post_context import time_of_day_profile, seasonal_context
         from aiogram.enums import ParseMode
@@ -580,7 +589,8 @@ class DashaBot:
             f"Даша — дизайнер корпусной мебели из Абакана. Личный опыт, конкретика: "
             f"материалы (массив, ЛДСП, МДФ), фурнитура, размеры, ошибки клиентов.{kb_block}\n\n"
             f"Требования: 600-900 знаков, живо, с эмодзи в тему, 1-2 хештега в конце, "
-            f"вопрос аудитории в самом конце. Женский род. Только по-русски, БЕЗ английских слов."
+            f"вопрос аудитории в самом конце. Женский род. Только по-русски, БЕЗ английских слов. "
+            f"ПЕРВАЯ строка-хук — строго о теме «{topic[:80]}», без посторонних клише."
             f"{_FORMAT_COMPLIANCE}"
         )
         ai_text = await _generate_channel_post(prompt, CHANNEL_POST_PROMPT, ptype)
@@ -602,21 +612,49 @@ class DashaBot:
             if tags:
                 text_body = (text_body.rstrip() + "\n\n· · ·\n" + tags)[:3860]
         text_full = text_body + footer
-        try:
-            msg = await self.bot.send_message(channel_id, text_full, parse_mode=ParseMode.HTML)
-            await self._react_to_own_post(channel_id, msg.message_id, text_full[:200])
-            logger.info(f"Channel: posted AI FALLBACK ({len(text_full)} chars) — {topic[:40]}")
-        except Exception as e:
-            logger.error(f"Channel fallback post failed (HTML): {e}")
+
+        # Подпись для фото-поста (бюджет caption 1024): те же правила, что у новостей
+        caption_body = smart_truncate_html(ai_text, 780, len(footer), append_ellipsis=False)
+        if "#" in ai_text and "#" not in caption_body:
+            tags = _extract_hashtags(ai_text)
+            if tags:
+                caption_body = (caption_body.rstrip() + "\n\n· · ·\n" + tags)[:860]
+        caption_full = caption_body + footer
+
+        # Визуал по теме (опция): пост с фото живее текстового
+        photo_bytes = None
+        if config.VISUALS_ENABLED:
             try:
-                import html as _html
-                plain = _html.unescape(re.sub(r'<[^>]+>', '', text_full))[:4096]
-                msg = await self.bot.send_message(channel_id, plain)
-                await self._react_to_own_post(channel_id, msg.message_id, plain[:200])
-                logger.info(f"Channel: posted AI FALLBACK plain ({len(plain)} chars)")
-            except Exception as e2:
-                logger.error(f"Channel fallback post failed (plain): {e2}")
-                return False
+                from bot.visuals import generate_furniture_image
+                photo_bytes = await generate_furniture_image(topic)
+            except Exception as e:
+                logger.debug(f"visual generation failed: {e}")
+
+        msg = None
+        if photo_bytes:
+            try:
+                from aiogram.types import BufferedInputFile
+                photo_file = BufferedInputFile(photo_bytes, filename="topic.jpg")
+                msg = await self.bot.send_photo(channel_id, photo_file, caption=caption_full, parse_mode=ParseMode.HTML)
+                logger.info(f"Channel: posted AI FALLBACK+visual (caption vis={_visible_len(caption_full)}) — {topic[:40]}")
+            except Exception as e:
+                logger.warning(f"Channel fallback photo post failed: {e}")
+        if msg is None:
+            try:
+                msg = await self.bot.send_message(channel_id, text_full, parse_mode=ParseMode.HTML)
+                logger.info(f"Channel: posted AI FALLBACK ({len(text_full)} chars) — {topic[:40]}")
+            except Exception as e:
+                logger.error(f"Channel fallback post failed (HTML): {e}")
+                try:
+                    import html as _html
+                    plain = _html.unescape(re.sub(r'<[^>]+>', '', text_full))[:4096]
+                    msg = await self.bot.send_message(channel_id, plain)
+                    logger.info(f"Channel: posted AI FALLBACK plain ({len(plain)} chars)")
+                except Exception as e2:
+                    logger.error(f"Channel fallback post failed (plain): {e2}")
+                    return False
+        if msg is not None:
+            await self._react_to_own_post(channel_id, msg.message_id, (caption_full or text_full)[:200])
         # Пометка против повтора темы после рестартов
         tfp = title_fingerprint(topic)
         if tfp:
@@ -677,7 +715,7 @@ class DashaBot:
             f"{kb_block}"
             f"\n\n{UNIQUIFICATION_RULES}\n\n"
             f"ОБЯЗАТЕЛЬНО:\n"
-            f"1. Хук — вопрос/интригующее утверждение по теме новости (НЕ «Сегодня хочу поделиться» и не «Сегодня я расскажу»)\n"
+            f"1. Хук — вопрос/интригующее утверждение СТРОГО по теме новости «{title[:80]}» (НЕ «Сегодня хочу поделиться», не «Сегодня я расскажу» и не посторонние клише)\n"
             f"2. Экспертный разбор: {length_req} от первого лица, личный опыт\n"
             f"3. Вывод-совет + вопрос аудитории + 1-2 хештега ОТДЕЛЬНОЙ строкой в самом конце\n\n"
             f"СТИЛЬ (как пишет Даша):\n"
@@ -782,7 +820,23 @@ class DashaBot:
             except Exception as e:
                 logger.warning(f"Image download failed: {e}")
 
-        # Case C: no image → send_message (HTML)
+        # Case C: no image → пробуем сгенерировать визуал по теме, иначе send_message (HTML)
+        if not posted:
+            if config.VISUALS_ENABLED:
+                try:
+                    from bot.visuals import generate_furniture_image
+                    photo_bytes = await generate_furniture_image(f"{title} {summary[:200]}")
+                    if photo_bytes:
+                        from aiogram.types import BufferedInputFile
+                        photo_file = BufferedInputFile(photo_bytes, filename="topic.jpg")
+                        msg = await self.bot.send_photo(channel_id, photo_file, caption=caption_full, parse_mode=ParseMode.HTML)
+                        posted = True
+                        if msg:
+                            await self._react_to_own_post(channel_id, msg.message_id, caption_full[:200])
+                        logger.info(f"Channel: posted NEWS+generated visual (caption vis={_visible_len(caption_full)}) — {title[:40]}")
+                except Exception as e:
+                    logger.warning(f"Generated visual post failed: {e}")
+                    posted = False
         if not posted:
             try:
                 msg = await self.bot.send_message(channel_id, text_full, parse_mode=ParseMode.HTML)
