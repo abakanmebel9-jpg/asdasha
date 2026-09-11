@@ -395,6 +395,27 @@ ROOM_TYPES = {
         ],
         "materials": ["влагостойкая МДФ", "бакелизированная фанера", "нержавеющий металл", "стекло"],
     },
+    "гардеробная": {
+        "description": "Гардеробная — система хранения вместо шкафа. Уже от 2 м² экономит место и деньги по сравнению с тремя шкафами.",
+        "key_furniture": [
+            {"name": "Стеллажи открытые", "recommended": "ЛДСП 16 мм, секции 90-100 см шириной"},
+            {"name": "Рейл для вешалок", "recommended": "высота 100-170 см, два яруса для рубашек"},
+            {"name": "Выдвижные ящики", "recommended": "для белья, глубина до 60 см"},
+            {"name": "Обувница выдвижная", "recommended": "наклонные полки 15-25°"},
+            {"name": "Зеркало", "recommended": "во весь рост на двери или стене"},
+        ],
+        "ergonomics": {
+            "глубина зоны вешалок": "55-60 см",
+            "проход": "минимум 60 см, комфортно 80 см",
+            "высота полок": "30-40 см между полками",
+            "антресоль": "от 190 см — сезонные вещи",
+        },
+        "storage_tips": [
+            "Открытая система дешевле закрытой на 30-40%",
+            "Зонирование: его/её/сезонное/повседневное",
+            "Освещение каждого модуля — LED-датчик",
+        ],
+    },
     "кабинет/офис": {
         "description": "Рабочее место — главное: правильная высота стола и стула, освещение.",
         "key_furniture": [
@@ -893,45 +914,131 @@ def detect_phone_request(text: str) -> bool:
     return any(kw in text_lower for kw in keywords)
 
 
+def _stem_match(text_lower: str, key: str, min_len: int = 4) -> bool:
+    """Устойчивое сравнение по основе слова (работает со склонениями).
+
+    'прихожая' ↔ 'прихожую' ↔ 'прихожей' — совпадение по первым 5 буквам.
+    """
+    if key in text_lower:
+        return True
+    stem = key[:max(min_len, len(key) - 2)]
+    return len(stem) >= min_len and stem in text_lower
+
+
+def _get_room_recommendations_all(query: str) -> List[str]:
+    """Все подходящие рекомендации по помещениям (устойчиво к склонениям)."""
+    results = []
+    q = query.lower()
+    for room_key, room_info in ROOM_TYPES.items():
+        if not _stem_match(q, room_key):
+            continue
+        result = f"🏠 {room_key.capitalize()}: {room_info['description']}\n"
+        if "key_furniture" in room_info:
+            names = []
+            for item in room_info["key_furniture"][:6]:
+                if isinstance(item, dict):
+                    names.append(item.get("name", ""))
+                else:
+                    names.append(str(item))
+            result += "Ключевая мебель: " + ", ".join(n for n in names if n) + "\n"
+        if "ergonomics" in room_info:
+            erg = list(room_info["ergonomics"].items())[:5]
+            result += "Эргономика: " + "; ".join(f"{k}: {v}" for k, v in erg) + "\n"
+        if "storage_tips" in room_info:
+            tips = room_info["storage_tips"][:3]
+            result += "Советы: " + " ".join(str(t) for t in tips)
+        results.append(result.strip())
+    return results
+
+
+def _get_material_advice_all(query: str) -> List[str]:
+    """Все подходящие советы по материалам (устойчиво к склонениям).
+
+    Матчится и по названиям типов, и по названию категории (МДФ, ЛДСП, массив).
+    """
+    results = []
+    q = query.lower()
+    for category_key, category in FURNITURE_MATERIALS.items():
+        cat_name = category.get("name", category_key)
+        # Совпадение по категории целиком: «что лучше МДФ или ЛДСП» → вся категория МДФ
+        cat_first_word = cat_name.split("(")[0].strip().split()[0].lower() if cat_name else ""
+        cat_match = bool(cat_first_word) and _stem_match(q, cat_first_word, min_len=3)
+        if "types" not in category:
+            continue
+        for type_name, type_info in category["types"].items():
+            type_match = _stem_match(q, type_name, min_len=4)
+            if not type_match and not cat_match:
+                continue
+            result = f"📋 {type_name.capitalize()} ({cat_name}):\n{type_info.get('description', '')}\n"
+            if "pros" in type_info:
+                result += "✅ Плюсы: " + ", ".join(type_info["pros"][:4]) + "\n"
+            if "cons" in type_info:
+                result += "⚠️ Минусы: " + ", ".join(type_info["cons"][:4]) + "\n"
+            if "best_for" in type_info:
+                result += "🏠 Лучше всего для: " + ", ".join(type_info["best_for"][:4]) + "\n"
+            if "price_range" in type_info:
+                result += f"💰 Цена: {type_info['price_range']}"
+            results.append(result.strip())
+            if len(results) >= 3:
+                return results
+    return results
+
+
+def _get_style_info_all(query: str) -> List[str]:
+    """Все подходящие описания стилей (устойчиво к склонениям)."""
+    results = []
+    q = query.lower()
+    for style_key, style_info in FURNITURE_STYLES.items():
+        if not _stem_match(q, style_key):
+            continue
+        result = f"🎨 {style_key.capitalize()}: {style_info['description']}\n"
+        result += "Особенности: " + ", ".join(style_info["characteristics"][:5]) + "\n"
+        result += f"Цвета: {', '.join(style_info['colors'][:5])}\n"
+        result += f"Материалы: {', '.join(style_info['materials'][:5])}"
+        results.append(result.strip())
+        if len(results) >= 2:
+            return results
+    return results
+
+
 def build_knowledge_context(query: str) -> str:
-    """Строит контекст из базы знаний на основе запроса."""
-    parts = []
-    topic = identify_furniture_topic(query)
+    """Строит контекст из базы знаний на основе запроса.
 
-    if topic:
-        advice = get_material_advice(query)
-        if advice:
-            parts.append(advice)
+    Агрегирует ВСЕ подходящие блоки (материалы, помещения, стили, фурнитура,
+    цены, гарантия, доставка) с устойчивым matching по основам слов.
+    Ограничение объёма ~2200 символов, чтобы не раздувать промпт.
+    """
+    parts: List[str] = []
+    query_lower = (query or "").lower()
 
-        room_rec = get_room_recommendations(query)
-        if room_rec:
-            parts.append(room_rec)
+    parts.extend(_get_material_advice_all(query))
+    parts.extend(_get_room_recommendations_all(query))
+    parts.extend(_get_style_info_all(query))
 
-    if not parts:
-        # Default: add general info
-        style = get_style_info(query)
-        if style:
-            parts.append(style)
-
-    # Добавляем информацию о брендах фурнитуры, если релевантно
     fittings_info = get_fittings_brand_info(query)
     if fittings_info:
         parts.append(fittings_info)
 
-    # Добавляем ценовую информацию, если спрашивают о ценах
     if detect_price_interest(query):
         parts.append(get_pricing_info())
 
-    # Добавляем информацию о гарантии, если релевантно
-    query_lower = query.lower()
     if any(kw in query_lower for kw in ["гаранти", "качество", "надёжн"]):
         parts.append(get_warranty_info())
 
-    # Добавляем информацию о городах Хакасии, если спрашивают о регионе
+    if detect_delivery_interest(query):
+        parts.append(
+            "📦 Доставка и производство: замер бесплатный, производство 2–3 недели, "
+            "доставка и сборка по Абакану и Хакасии. Детали: abakanmebel.online"
+        )
+
     if any(kw in query_lower for kw in ["хакаси", "черногорск", "саяногорск", "абаза", "сорск", "усть-абакан"]):
         parts.append(get_khakassia_cities_info())
 
-    return "\n\n".join(parts) if parts else ""
+    # Обрезаем итог до разумного объёма
+    out = "\n\n".join(p for p in parts if p)
+    if len(out) > 2200:
+        out = out[:2200].rsplit("\n", 1)[0] + "…"
+    return out
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1317,3 +1424,51 @@ FURNITURE_TYPES = {
         "upholstery": ["ткань (велюр, рогожка, шенилл)", "экокожа", "натуральная кожа"],
     },
 }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# МЕБЕЛЬНЫЕ ФАКТЫ — для команды /fact и enrich-контекста
+# ═══════════════════════════════════════════════════════════════════════════
+
+FURNITURE_FACTS = [
+    "🪵 Массив дуба может прослужить 50+ лет — это одна из самых долговечных пород для столешниц.",
+    "📐 Стандартная глубина кухонных нижних шкафов — 560 мм, а столешницы — 600 мм: передний свес защищает фасады от влаги.",
+    "🔩 Петли с доводчиками (soft-close) выдерживают до 80 000 циклов открывания — это 20+ лет ежедневной эксплуатации.",
+    "🧽 ЛДСП практичнее МДФ для корпусов: дешевле, легче и не боится влаги внутри шкафа.",
+    "🎨 Фасады МДФ в матовой плёнке ПВХ не оставляют отпечатков пальцев — идеально для кухни.",
+    "📏 Оптимальная высота верхних кухонных шкафов от столешницы — 450–600 мм: всё нужное под рукой.",
+    "🛋 Гардеробная от 2 м² заменяет три шкафа-купе — и стоит сопоставимо.",
+    "🌰 Древесина березы прочнее сосны почти в 1,5 раза — из неё делают корпуса бюджетной, но надёжной мебели.",
+    "✨ Кромка ПВХ 2 мм на видимых торцах защищает фасады ЛДСП от сколов на годы.",
+    "🔄 Выдвижные ящики на направляющих скрытого монтажа выдерживают до 40 кг каждый — проверено нагрузочными тестами.",
+    "🏠 Угловая кухня экономит до 30% площади по сравнению с прямой при том же объёме хранения.",
+    "🪑 Стул из массива бука гнётся под паром — так делают знаменитые венские стулья.",
+    "💡 LED-подсветка под верхними шкафами визуально «приподнимает» кухню и делает готовку комфортнее.",
+    "🌡 ЛДСП боится влажности выше 70% — поэтому в ванной лучше МДФ, окрашенный эмалью.",
+    "🔧 Направляющие полного выдвижения позволяют достать до самого дна ящика — больше никакого «мёртвого пространства».",
+    "📦 Фасады из шпона — это срез настоящего дерева толщиной 0,5 мм: вид массива по цене МДФ.",
+    "🛏 Кровать с газлифтом прячет до 400 л вещей под матрасом — целая гардеробная!",
+    "⚡ Модульные кухни собираются за 1 день, а «мебель по индивидуальному проекту» — за 2–3 недели.",
+    "🎨 В тренде 2025–2026 — фасады без ручек (push-to-open или профиль-гола): чистые линии и лёгкая уборка.",
+    "🧴 Массив ореха со временем «зреет» — оттенок становится глубже и благороднее.",
+    "📏 Правило рабочего треугольника: холодильник–мойка–плита должны образовывать треугольник 3,5–6,6 м.",
+    "🛋 Кромка ABS экологичнее ПВХ и не выделяет хлора — для детской мебели только ABS.",
+    "🔨 Полки из ЛДСП 16 мм прогибаются при ширине свыше 800 мм — нужен ребро жёсткости или толще плита.",
+    "🌟 Глянцевые фасады в акриле отражают до 90% света — маленькая кухня кажется вдвое больше.",
+    "🍃 Ламинированная ЛДСП класса Е0,5 — практически нулевая эмиссия формальдегида, безопасно для детской.",
+    "🚪 Шкаф-купе экономит до 1,5 м² площади — двери не требуют места для открывания.",
+    "🪵 Лиственница почти не боится воды — из неё делают подоконники и мебель для бань.",
+    "🧲 Магнитные защёлки на распашных дверцах — копеечная фурнитура, которая избавляет от хлопающих дверей.",
+    "📐 Высота барной стойки — 110–115 см, обычной обеденной — 75 см: не перепутайте при заказе.",
+    "🎯 Качественная фурнитура (Blum, Hettich) даёт гарантию до 20 лет — это «скелет» долговечной мебели.",
+]
+
+_fact_idx = {"i": 0}
+
+def random_furniture_fact() -> str:
+    """Возвращает случайный факт о мебели без повторов подряд."""
+    import random as _random
+    # 80% — случайный, 20% — детерминированный следующий (защита от повтора)
+    if _random.random() < 0.8:
+        return _random.choice(FURNITURE_FACTS)
+    _fact_idx["i"] = (_fact_idx["i"] + 1) % len(FURNITURE_FACTS)
+    return FURNITURE_FACTS[_fact_idx["i"]]

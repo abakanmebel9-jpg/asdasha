@@ -42,7 +42,11 @@ def build_config():
                     continue  # skip cloudflare if no account ID
             e={"baseUrl":base_url,"api":p["api"],"timeoutSeconds":p["timeoutSeconds"],"models":p["models"]}
             if p.get("always"):
-                if p.get("apiKey"): e["apiKey"]=p["apiKey"]
+                # Pollinations: использовать API-ключ если задан (аутентифицированные
+                # запросы стабильнее анонимных и не зависят от IP-лимитов)
+                poll_key = os.getenv("POLLINATIONS_API_KEY_1") or os.getenv("POLLINATIONS_API_KEY") or ""
+                if poll_key and poll_key.lower() not in ("not_configured","none","null"):
+                    e["apiKey"] = poll_key
             else:
                 e["apiKey"]={"source":"env","provider":"default","id":p["env"]}
             provs[p["id"]]=e; active.append(p["id"])

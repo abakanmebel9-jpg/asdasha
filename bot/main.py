@@ -1,4 +1,4 @@
-"""Даша Main — starts OpenClaw gateway + aiogram bot + furniture channel scheduler."""
+"""Даша Main — starts OpenClaw gateway (optional) + aiogram bot + furniture channel scheduler."""
 import asyncio, logging, os, re, signal, subprocess, sys, time, random
 from pathlib import Path
 from aiogram import Bot, Dispatcher
@@ -7,7 +7,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from bot.config import config
 from bot import database as db
 from bot.mood import mood_loop, current_mood_descriptor
-from bot.partners import partner_manager
 from ai import client as ai_client
 from bot.post_utils import (
     smart_truncate, smart_truncate_html, clean_post_text, validate_post_text,
@@ -19,6 +18,71 @@ from bot.text_polish import polish_grammar, linkify_contacts, dedupe_contacts
 logging.basicConfig(level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO), format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("dasha.main")
 for noisy in ["aiogram.event", "httpx", "httpcore", "aiosqlite"]: logging.getLogger(noisy).setLevel(logging.WARNING)
+
+# Ключевые слова мебельной релевантности: постим только про мебель/интерьер/ремонт
+_NEWS_RELEVANT_KEYWORDS = [
+    "мебел", "кухн", "шкаф", "стол", "стул", "кресл", "диван", "кроват",
+    "гардероб", "прихож", "фасад", "столешниц", "материал", "лдсп", "мдф",
+    "массив", "фурнитур", "петл", "направляющ", "доводчик", "интерьер",
+    "дизайн", "ремонт", "планировк", "хранение", "полк", "комод", "тумб",
+    "гостин", "спальн", "детск", "ванн", "керамогранит", "плитк", "свет",
+    "цвет", "стил", "тренд", "furniture", "interior", "design", "kitchen",
+    "cabine", "лофт", "минимализм", "сканди", "классик",
+    "производств", "сборк", "замер", "заказ",
+]
+
+def _is_furniture_news(title: str, summary: str = "") -> bool:
+    """Проверяет, что новость относится к мебели/интерьеру/ремонту."""
+    t = f"{title} {summary}".lower()
+    return any(kw in t for kw in _NEWS_RELEVANT_KEYWORDS)
+
+def build_channel_footer() -> str:
+    """Единый HTML-футер канала: кликабельные телефон и сайт."""
+    phone = config.PHONE or "+7 (913) 448-37-17"
+    tel_digits = re.sub(r"[^\d+]", "", phone)
+    return (
+        f'\n\n🛋 Автор — <a href="https://t.me/asdasha_bot">Даша</a> | Кухни на заказ в Абакане\n'
+        f'📞 <a href="tel:{tel_digits}">{phone}</a> | '
+        f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
+    )
+
+# Хештеги по ключевым словам темы (для постов без хештегов)
+_TOPIC_HASHTAGS = [
+    (["кухн"], "#кухни"),
+    (["шкаф", "купе", "гардероб"], "#шкафы"),
+    (["прихож", "коридор"], "#прихожая"),
+    (["мдф", "лдсп", "массив", "материал", "кромк"], "#материалы"),
+    (["дизайн", "интерьер", "стил", "тренд", "цвет"], "#дизайнинтерьера"),
+    (["фурнитур", "петл", "доводчик", "направляющ"], "#фурнитура"),
+    (["столешниц"], "#столешницы"),
+    (["влаж", "ванн", "уход", "мыть"], "#уход"),
+]
+
+def _add_topic_hashtags(text: str, topic: str = "") -> str:
+    """Добавляет до 2 релевантных хештега, если в тексте их ещё нет."""
+    if "#" in text:
+        return text
+    combined = f"{topic} {text}".lower()
+    tags = []
+    for keywords, tag in _TOPIC_HASHTAGS:
+        if any(kw in combined for kw in keywords):
+            tags.append(tag)
+        if len(tags) >= 2:
+            break
+    if not tags:
+        tags = ["#мебельназаказ"]
+    return text.rstrip() + "\n\n" + " ".join(tags)
+
+def _furniture_knowledge_block(text: str) -> str:
+    """Блок знаний из базы dasha.py по теме (материалы/стили/размеры)."""
+    try:
+        from bot.dasha import build_knowledge_context
+        kb = build_knowledge_context(text)
+        if kb:
+            return "\n\nСправка из базы знаний мебельного производства (используй факты, вплети своими словами):\n" + kb
+    except Exception as e:
+        logger.debug(f"knowledge block error: {e}")
+    return ""
 
 from bot.handlers.chat import chat_router
 from bot.handlers.groups import group_router
@@ -96,7 +160,7 @@ class DashaBot:
             except: pass
 
     async def start(self):
-        logger.info("=== Даша (OpenClaw) стартует ===")
+        logger.info("=== Даша (корпусная мебель, Абакан) стартует ===")
         try:
             me = await self.bot.get_me()
             config.BOT_ID = me.id
@@ -110,10 +174,6 @@ class DashaBot:
             await db.load_posted_news_from_file()
         except Exception as e:
             logger.warning(f"load_posted_news_from_file failed: {e}")
-        try:
-            await partner_manager.load()
-            logger.info(f"Partners loaded: {len(partner_manager.campaigns)} campaigns")
-        except: pass
         await ai_client.initialize()
         logger.info(f"AI client ready — {config.providers_status()}")
         asyncio.create_task(mood_loop(), name="mood_loop")
@@ -148,17 +208,77 @@ class DashaBot:
         except: pass
 
     async def _channel_scheduler(self):
-        """Background task: post furniture news to @abakan_mebel every 30 min.
+        """Background task: post furniture news to @abakan_mebel every ~30 min.
 
-        Full pipeline: fetch → dedup → AI generate → clean → polish → validate → smart truncate → post.
+        Full pipeline: fetch → dedup → AI generate → clean → polish → validate →
+        min-quality check → smart truncate → post with photo/media_group/text + reactions.
         Posts 1 item per cycle. HTML parse mode for clickable footer with phone/site.
         """
         from bot.persona import CHANNEL_POST_PROMPT
         from bot.post_utils import topic_fingerprint
         from aiogram.enums import ParseMode
-        await asyncio.sleep(30)  # was 120 — faster first post
-        post_interval = 1800  # 30 min (restored to pre-OpenClaw schedule)
-        NEWS_URL = "https://raw.githubusercontent.com/abakanmebel9-jpg/par/main/data/furniture-news.json"
+        await asyncio.sleep(30)  # fast first post
+
+        NEWS_URL = config.NEWS_URL
+
+        # Темы для AI-генерации, когда все новости исчерпаны.
+        # Строго корпусная мебель: кухни, шкафы, материалы, фурнитура, производство.
+        furniture_topics = [
+            "Кухни из массива дуба: плюсы и минусы",
+            "Скандинавский стиль в интерьере кухни",
+            "Как выбрать ЛДСП для корпуса кухни",
+            "Угловые кухни: планировка для маленькой кухни",
+            "Керамогранит против плитки: фартук на годы",
+            "МДФ фасады: уход и эксплуатация",
+            "Кухонный остров: за и против",
+            "Хранение на кухне: 5 лайфхаков дизайнера",
+            "Освещение кухни: правила и тренды",
+            "Цвет кухни 2026: тренды и сочетания",
+            "Барная стойка вместо обеденного стола",
+            "Интеграция техники в кухонный гарнитур",
+            "Выдвижные системы: организация хранения в шкафах",
+            "Кухни в стиле лофт: характерные черты",
+            "Минимализм на кухне: меньше деталей, больше пространства",
+            "Шкаф-купе или распашной шкаф: что выбрать",
+            "Гардеробная комната за 2 квадратных метра: реально ли",
+            "Петли с доводчиком: почему нельзя экономить на фурнитуре",
+            "Столешница из массива: как выбрать породу дерева",
+            "Прихожая на заказ: 6 идей для маленького коридора",
+            "Ошибки планировки кухни: рабочий треугольник",
+            "Мебель в ванную: какие материалы выдержат влагу",
+            "Матовые или глянцевые фасады: сравнение от практика",
+            "Кромка фасадов: ПВХ против ABS — в чём разница",
+            "Кухня без ручек: push-to-open и профиль-гола",
+            "Наполнение шкафа-купе: штанги, полки, выдвижные корзины",
+            "Как рассчитать бюджет кухни на заказ: из чего складывается цена",
+            "Фальшпанель vs общий фартук: разбираем детали",
+            "Детская мебель: безопасность материалов класса Е0,5",
+            "Открытые полки или закрытые шкафы: мнения дизайнера",
+            "Тренд тёплого минимализма в мебели 2026",
+            "Как подготовить стены к установке корпусной мебели",
+            "Уход за фасадами МДФ: чем мыть и чего бояться",
+            "Спальные места с подъёмным механизмом: плюсы и минусы",
+            "Мебель в студию: зонирование корпусной мебелью",
+            "Антивандальные покрытия для детской и прихожей",
+            "Что такое столешница из HPL и почему она практична",
+            "Замер перед заказом кухни: что важно не упустить",
+            "Карго-секции и бутылочницы: стоит ли переплачивать",
+            "Встроенная техника: ошибки при заказе под неё шкафов",
+            "Цветные кухни: как сочетать фасады со столешницей",
+            "Тумба под раковину: как выбрать влагостойкую",
+            "Топ-5 вопросов клиентов перед заказом гардеробной",
+            "Как проверить качество собранной мебели: чек-лист",
+            "Мебельные ножки и цоколь: на что обратить внимание",
+        ]
+        _topic_cycle = {"i": 0, "order": random.sample(furniture_topics, len(furniture_topics))}
+
+        def _next_topic() -> str:
+            order = _topic_cycle["order"]
+            topic = order[_topic_cycle["i"] % len(order)]
+            _topic_cycle["i"] += 1
+            if _topic_cycle["i"] % len(order) == 0:
+                _topic_cycle["order"] = random.sample(furniture_topics, len(furniture_topics))
+            return topic
 
         while True:
             try:
@@ -167,25 +287,22 @@ class DashaBot:
 
                 # 1. Fetch furniture-news.json
                 import httpx
-                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                    resp = await client.get(NEWS_URL, headers={"User-Agent": "DashaBot/1.0"})
-                if resp.status_code != 200:
-                    logger.warning(f"News fetch failed: HTTP {resp.status_code}")
-                    await asyncio.sleep(post_interval)
-                    continue
-
-                news_data = resp.json()
-                all_items = news_data.get("items", [])
-                if not all_items:
-                    logger.warning("No news items in furniture-news.json")
-                    await asyncio.sleep(post_interval)
-                    continue
-
-                logger.info(f"Fetched {len(all_items)} furniture news items")
+                news_items = []
+                try:
+                    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                        resp = await client.get(NEWS_URL, headers={"User-Agent": "DashaBot/1.0"})
+                    if resp.status_code == 200:
+                        news_data = resp.json()
+                        news_items = news_data.get("items", [])
+                        logger.info(f"Fetched {len(news_items)} furniture news items")
+                    else:
+                        logger.warning(f"News fetch failed: HTTP {resp.status_code}")
+                except Exception as e:
+                    logger.warning(f"News fetch error: {e}")
 
                 # 2. Find up to 4 candidate news items (retry if AI empty/validation fail)
                 candidates = []
-                for item in all_items:
+                for item in news_items:
                     news_id = item.get("id", "")
                     item_url = item.get("url", "")
                     title = item.get("title", "")
@@ -200,67 +317,23 @@ class DashaBot:
                     if topic and len(topic.split()) >= 2 and await db.is_news_posted(f"topic:{topic}"):
                         logger.info(f"Topic already posted — skip: {topic[:40]}")
                         continue
+                    # Фильтр релевантности: тема должна быть про мебель/интерьер/ремонт
+                    if not _is_furniture_news(title, item.get("summary", "")):
+                        logger.info(f"News not furniture-relevant — skip: {title[:40]}")
+                        continue
                     candidates.append(item)
                     if len(candidates) >= 4:
                         break
 
                 if not candidates:
-                    # AI-generated fallback: furniture topics (restored from pre-OpenClaw)
-                    logger.info("All furniture news posted — AI-generated furniture topic")
-                    furniture_topics = [
-                        "Кухни из массива дуба: плюсы и минусы",
-                        "Скандинавский стиль в интерьере кухни",
-                        "Как выбрать ЛДСП для кухни",
-                        "Угловые кухни: планировка для маленькой кухни",
-                        "Керамогранит vs плитка для фартука",
-                        "МДФ фасады: уход и эксплуатация",
-                        "Кухонный остров: за и против",
-                        "Хранение на кухне: 5 лайфхаков дизайнера",
-                        "Освещение кухни: правила и тренды",
-                        "Цвет кухни 2026: тренды и сочетания",
-                        "Барная стойка вместо обеденного стола",
-                        "Интеграция техники в кухонный гарнитур",
-                        "Выдвижные системы: организация хранения",
-                        "Кухни в стиле лофт: характерные черты",
-                        "Минимализм на кухне: меньше деталей, больше пространства",
-                    ]
-                    topic = random.choice(furniture_topics)
-                    mood = await current_mood_descriptor()
-                    prompt = (
-                        f"Напиши пост для канала @abakan_mebel на тему: {topic}.\n\n"
-                        f"Контекст: {date_context()}, настроение: {mood}\n"
-                        f"Даша — дизайнер мебели из Абакана. Личный опыт, материалы (массив, ЛДСП, МДФ).\n"
-                        f"500-800 символов, живо, с эмодзи. SEO: ключевые слова в начале, 1-2 хештега, вопрос в конце. Женский род. По-русски."
-                    )
-                    from bot.persona import CHANNEL_POST_PROMPT
-                    post = await ai_client.chat(prompt, system=CHANNEL_POST_PROMPT, max_tokens=600, allow_static_fallback=False, prefer_pollinations=True)
-                    if post:
-                        from bot.post_utils import clean_post_text, smart_truncate
-                        from bot.text_polish import polish_grammar
-                        ai_text = clean_post_text(post, "Даша")
-                        ai_text = polish_grammar(ai_text)
-                        phone = getattr(config, 'PHONE', '+7 (913) 448-37-17')
-                        tel_digits = phone.replace(" ", "").replace("(", "").replace(")", "").replace("-", "")
-                        FOOTER = (
-                            f'\n\nАвтор <a href="https://t.me/asdasha_bot">@asdasha_bot</a> Кухни на заказ '
-                            f'📞 {phone} '
-                            f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
-                        )
-                        from aiogram.enums import ParseMode
-                        text_body = smart_truncate(ai_text, 4096 - len(FOOTER) - 10, 0)
-                        text_full = text_body + FOOTER
-                        try:
-                            msg = await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
-                            await self._react_to_own_post(channel_id, msg.message_id, text_full[:200])
-                            logger.info(f"Channel: posted AI FALLBACK ({len(text_full)} chars) — {topic[:40]}")
-                        except Exception as e:
-                            # Plain fallback
-                            import re
-                            plain = re.sub(r'<[^>]+>', '', text_full)[:4096]
-                            msg = await self.bot.send_message(channel_id, plain)
-                            await self._react_to_own_post(channel_id, msg.message_id, plain[:200])
-                            logger.info(f"Channel: posted AI FALLBACK plain ({len(plain)} chars)")
-                    # Don't continue — fall through to sleep at end of loop
+                    # AI-generated fallback: мебельные темы (без повторов циклом)
+                    topic = _next_topic()
+                    tfp = title_fingerprint(topic)
+                    if tfp and await db.is_news_posted(f"fb:{tfp}"):
+                        topic = _next_topic()
+                        tfp = title_fingerprint(topic)
+                    logger.info(f"No fresh furniture news — AI-generated topic: {topic}")
+                    await self._post_ai_topic(topic, mood, channel_id)
 
                 # 3. Try candidates until we post 1 (or exhaust candidates)
                 posted = False
@@ -274,7 +347,9 @@ class DashaBot:
                             logger.info(f"News skipped (AI empty or validation) — trying next candidate")
                     except Exception as e:
                         logger.error(f"Post news item error: {e}")
-                if not posted:
+                if not posted and not candidates:
+                    logger.info("Cycle complete: fallback topic posted")
+                elif not posted:
                     logger.info(f"Cycle complete: no posts from {len(candidates)} candidates")
 
             except asyncio.CancelledError:
@@ -282,7 +357,65 @@ class DashaBot:
             except Exception as e:
                 logger.error(f"Channel scheduler error: {e}")
 
-            await asyncio.sleep(post_interval)
+            # Jitter: интервал 27–36 мин — постинг выглядит живым, а не по крону
+            await asyncio.sleep(1620 + random.randint(0, 540))
+
+    async def _post_ai_topic(self, topic: str, mood: str, channel_id: int):
+        """Генерирует и публикует пост на заданную мебельную тему (fallback без новости).
+
+        Пайплайн: AI → clean → polish → validate → min-quality → hashtags →
+        HTML-пост с футером → реакции. Пометки fb: в БД против повторов.
+        """
+        from bot.persona import CHANNEL_POST_PROMPT
+        from bot.post_utils import clean_post_text, title_fingerprint
+        from aiogram.enums import ParseMode
+
+        kb_block = _furniture_knowledge_block(topic)
+        prompt = (
+            f"Напиши пост для канала @abakan_mebel на тему: {topic}.\n\n"
+            f"Контекст: {date_context()}, настроение: {mood}\n"
+            f"Даша — дизайнер корпусной мебели из Абакана. Личный опыт, конкретика: "
+            f"материалы (массив, ЛДСП, МДФ), фурнитура, размеры, ошибки клиентов.{kb_block}\n\n"
+            f"Требования: 600-900 знаков, живо, с эмодзи в тему, 1-2 хештега в конце, "
+            f"вопрос аудитории в самом конце. Женский род. По-русски."
+        )
+        post = await ai_client.chat(prompt, system=CHANNEL_POST_PROMPT, max_tokens=800,
+                                    allow_static_fallback=False, prefer_pollinations=True)
+        if not post:
+            logger.warning("AI fallback topic: empty response")
+            return False
+        ai_text = clean_post_text(post, "Даша")
+        ai_text = enforce_no_meetings(ai_text)
+        ai_text = polish_grammar(ai_text)
+        is_valid, reason = validate_post_text(ai_text)
+        if not is_valid or len(ai_text) < 250:
+            logger.warning(f"AI fallback topic validation FAILED ({reason}, len={len(ai_text)}) — {topic[:40]}")
+            return False
+        ai_text = _add_topic_hashtags(ai_text, topic)
+
+        footer = build_channel_footer()
+        text_body = smart_truncate_html(ai_text, 4096, len(footer))
+        text_full = text_body + footer
+        try:
+            msg = await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
+            await self._react_to_own_post(channel_id, msg.message_id, text_full[:200])
+            logger.info(f"Channel: posted AI FALLBACK ({len(text_full)} chars) — {topic[:40]}")
+        except Exception as e:
+            logger.error(f"Channel fallback post failed (HTML): {e}")
+            try:
+                import html as _html
+                plain = _html.unescape(re.sub(r'<[^>]+>', '', text_full))[:4096]
+                msg = await self.bot.send_message(channel_id, plain)
+                await self._react_to_own_post(channel_id, msg.message_id, plain[:200])
+                logger.info(f"Channel: posted AI FALLBACK plain ({len(plain)} chars)")
+            except Exception as e2:
+                logger.error(f"Channel fallback post failed (plain): {e2}")
+                return False
+        # Пометка против повтора темы после рестартов
+        tfp = title_fingerprint(topic)
+        if tfp:
+            await db.mark_news_posted(f"fb:{tfp}", topic)
+        return True
 
     async def _post_news_item(self, news_item, mood, channel_id, channel_prompt):
         """Post a single furniture news item. Returns True if posted.
@@ -306,7 +439,6 @@ class DashaBot:
         all_images = list(dict.fromkeys([image_url] + images_list)) if image_url else list(images_list)
         all_images = [u for u in all_images if u][:10]
         news_id = news_item.get("id", "")
-        phone = getattr(config, 'PHONE', '+7 (913) 448-37-17')
 
         # URL dedup
         if url:
@@ -318,19 +450,24 @@ class DashaBot:
         logger.info(f"Selected furniture news: {title[:60]} (imgs: {len(all_images)})")
 
         # Generate AI commentary (NO translation — furniture news is already in Russian)
+        kb_block = _furniture_knowledge_block(f"{title} {summary}")
         prompt = (
             f"Напиши пост для канала @abakan_mebel с комментарием на эту новость о мебели/интерьере.\n\n"
             f"Контекст: {date_context()}, настроение: {mood}\n\n"
             f"Заголовок новости: {title}\n"
             f"Краткое содержание: {summary[:500]}\n"
-            f"\n{UNIQUIFICATION_RULES}\n\n"
-            f"СТИЛЬ (как раньше писала Даша):\n"
-            f"- 800-1050 символов, живой экспертный разбор от первого лица\n"
-            f"- Даша — дизайнер мебели из Абакана: 'Как дизайнер, я всегда...'\n"
-            f"- Материалы: массив, ЛДСП, МДФ, керамогранит, стекло\n"
-            f"- Стили: скандинавский, лофт, минимализм, прованс\n"
+            f"{kb_block}"
+            f"\n\n{UNIQUIFICATION_RULES}\n\n"
+            f"СТРУКТУРА:\n"
+            f"1. Хук — вопрос/интригующее утверждение по теме новости\n"
+            f"2. Экспертный разбор: 800-1000 знаков от первого лица, личный опыт\n"
+            f"3. Вывод-совет + вопрос аудитории + 1-2 хештега\n\n"
+            f"СТИЛЬ (как пишет Даша):\n"
+            f"- Даша — дизайнер корпусной мебели из Абакана: 'Как дизайнер, я всегда...'\n"
+            f"- Материалы: массив, ЛДСП, МДФ, керамогранит, стекло; фурнитура\n"
+            f"- Стили: скандинавский, лофт, минимализм, классика\n"
             f"- Личный опыт: 'В моих проектах...', 'Я всегда задумываюсь...'\n"
-            f"- Эмодзи: \U0001f6cb\u2728\U0001f3e8\U0001f3a8\U0001f4d0\U0001fab5\U0001f525 естественно\n"
+            f"- Эмодзи умеренно и в тему\n"
             f"- Женский род, по-русски, БЕЗ грамматических ошибок\n"
             f"- НЕ добавляй ссылки, НЕ пиши 'Источник'\n"
             f"- НЕ начинай с 'Даша:'\n"
@@ -365,19 +502,22 @@ class DashaBot:
                 await db.mark_news_posted(url_normalize(url), title)
             return False
 
+        # Минимальное качество: короткие ответы AI отклоняем и берём следующую новость
+        if len(ai_text) < 250:
+            logger.warning(f"Post too short for quality ({len(ai_text)} < 250 chars) — trying next candidate")
+            return False
+
+        # Хештеги по теме, если AI их не добавил
+        ai_text = _add_topic_hashtags(ai_text, title)
+
         # Text fingerprint dedup
         fp = text_fingerprint(ai_text)
         if await db.is_news_posted(f"fp:{fp}"):
             logger.info(f"Text fingerprint already posted — skip: {fp[:16]}")
             return False
 
-        # HTML footer with clickable links
-        tel_digits = phone.replace(" ", "").replace("(", "").replace(")", "").replace("-", "")
-        FOOTER = (
-            f'\n\nАвтор <a href="https://t.me/asdasha_bot">@asdasha_bot</a> Кухни на заказ '
-            f'📞 {phone} '
-            f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
-        )
+        # Единый HTML-футер с кликабельным телефоном и сайтом
+        FOOTER = build_channel_footer()
 
         # Smart truncate (HTML-safe, reserves footer space)
         caption_body = smart_truncate_html(ai_text, 1024, len(FOOTER))
@@ -408,8 +548,10 @@ class DashaBot:
                 if img_resp.status_code == 200 and validate_image(img_resp.content):
                     from aiogram.types import BufferedInputFile
                     photo_file = BufferedInputFile(img_resp.content, filename="news.jpg")
-                    await self.bot.send_photo(channel_id, photo_file, caption=caption_full[:1024], parse_mode=ParseMode.HTML)
+                    msg = await self.bot.send_photo(channel_id, photo_file, caption=caption_full[:1024], parse_mode=ParseMode.HTML)
                     posted = True
+                    if msg:
+                        await self._react_to_own_post(channel_id, msg.message_id, caption_full[:200])
                     logger.info(f"Channel: posted NEWS+photo (caption {len(caption_full[:1024])}) — {title[:40]}")
                 else:
                     logger.warning(f"Image validation failed: HTTP {img_resp.status_code}, {len(img_resp.content)} bytes")
@@ -427,7 +569,8 @@ class DashaBot:
                 logger.error(f"Channel post failed (HTML): {e}")
                 # Fallback: plain text (strip HTML tags)
                 try:
-                    plain = re.sub(r'<[^>]+>', '', text_full)[:4096]
+                    import html as _html
+                    plain = _html.unescape(re.sub(r'<[^>]+>', '', text_full))[:4096]
                     await self.bot.send_message(channel_id, plain)
                     posted = True
                     logger.info(f"Channel: posted NEWS text-only PLAIN fallback — {title[:40]}")
@@ -500,19 +643,29 @@ class DashaBot:
 
     async def _notify_owner(self):
         mood = await current_mood_descriptor()
+        gw = "OpenClaw" if ai_client.gateway_available() else "прямые провайдеры"
         try:
-            await self.bot.send_message(config.OWNER_ID, f"Я на связи 🛋 Даша, сейчас я {mood}. OpenClaw: {config.OPENCLAW_URL}. Провайдеры: {config.providers_status()}. Канал: @{config.CHANNEL_USERNAME}. Телефон: {config.PHONE}. Пиши или добавь в группу 💬")
+            await self.bot.send_message(config.OWNER_ID, f"Я на связи 🛋 Даша (корпусная мебель, Абакан), сейчас я {mood}. AI: {gw}. Провайдеры: {config.providers_status()}. Канал: @{config.CHANNEL_USERNAME}. Телефон: {config.PHONE}. Пиши или добавь в группу 💬")
         except: pass
 
 async def main():
     global _openclaw_proc
-    cfg_path = _generate_openclaw_config()
-    _openclaw_proc = _start_openclaw_gateway(cfg_path)
-    ready = await _wait_for_gateway(120.0)
-    if not ready:
-        logger.error("OpenClaw Gateway did not become ready — exiting")
+    # OpenClaw gateway — опциональный: если не завёлся, бот работает через
+    # прямые провайдеры (Pollinations/Cloudflare/Groq и др.). Это критично
+    # для стабильности: шлюз не должен ронять весь бот-процесс.
+    gateway_ready = False
+    try:
+        cfg_path = _generate_openclaw_config()
+        _openclaw_proc = _start_openclaw_gateway(cfg_path)
+        gateway_ready = await _wait_for_gateway(60.0)
+    except Exception as e:
+        logger.warning(f"OpenClaw gateway setup failed: {e}")
+    if gateway_ready:
+        logger.info("OpenClaw gateway ready")
+    else:
+        logger.warning("OpenClaw gateway NOT ready — продолжаю через прямые провайдеры")
+        ai_client.disable_gateway()
         _stop_openclaw_gateway()
-        sys.exit(1)
     bot = DashaBot()
     def _sig(*_): asyncio.create_task(bot.dp.stop_polling())
     for sig in (signal.SIGINT, signal.SIGTERM):

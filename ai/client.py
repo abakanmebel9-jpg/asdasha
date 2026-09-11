@@ -72,6 +72,45 @@ _client: Optional[httpx.AsyncClient] = None
 _pollinations_sem: asyncio.Semaphore | None = None
 _openclaw_sem: asyncio.Semaphore | None = None
 
+# ─── Circuit breaker для OpenClaw gateway ────────────────────────────────
+# Если шлюз не отвечает — НЕ тратим 30+ сек на каждый вызов, а временно
+# переключаемся на прямые провайдеры (Pollinations/Cloudflare/Groq...).
+_gw_disabled = False
+_gw_fail_count = 0
+_gw_skip_until = 0.0
+_GW_FAIL_THRESHOLD = 3
+_GW_COOLDOWN_SEC = 600  # 10 минут паузы после 3 неудач
+_poll_skip_until = 0.0  # пауза для Pollinations после 402/429
+
+def disable_gateway():
+    """Полностью отключить OpenClaw (например, шлюз не запустился)."""
+    global _gw_disabled
+    _gw_disabled = True
+    logger.warning("OpenClaw gateway DISABLED — работаю через прямые провайдеры (Pollinations/Cloudflare)")
+
+def gateway_available() -> bool:
+    if _gw_disabled:
+        return False
+    if time.time() < _gw_skip_until:
+        return False
+    return True
+
+def _mark_gw_failure():
+    global _gw_fail_count, _gw_skip_until
+    _gw_fail_count += 1
+    if _gw_fail_count >= _GW_FAIL_THRESHOLD:
+        _gw_skip_until = time.time() + _GW_COOLDOWN_SEC
+        logger.warning(f"OpenClaw circuit breaker OPEN на {_GW_COOLDOWN_SEC}с (failures={_gw_fail_count})")
+
+def _mark_gw_success():
+    global _gw_fail_count
+    _gw_fail_count = 0
+
+def stats():
+    s = dict(_stats)
+    s["gateway"] = "disabled" if _gw_disabled else ("cooldown" if time.time() < _gw_skip_until else ("ok" if _gw_fail_count == 0 else f"fails={_gw_fail_count}"))
+    return s
+
 def _get_pollinations_sem():
     global _pollinations_sem
     if _pollinations_sem is None: _pollinations_sem = asyncio.Semaphore(2)
@@ -107,6 +146,9 @@ async def _wait_for_gateway(timeout=90.0):
     return False
 
 async def _call_openclaw(messages, max_tokens, temperature, timeout=25.0):
+    # Circuit breaker: мгновенно отдаём управление fallback-провайдерам
+    if not gateway_available():
+        return ""
     if _client is None: await initialize()
     payload = {"model": _MODEL, "messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": False}
     sem = _get_openclaw_sem()
@@ -119,17 +161,23 @@ async def _call_openclaw(messages, max_tokens, temperature, timeout=25.0):
                 choices = data.get("choices") or []
                 if choices:
                     content = (choices[0].get("message", {}).get("content", "") or "").strip()
-                    if content: return content
+                    if content:
+                        _mark_gw_success()
+                        return content
                 return ""
-            if r.status_code in (502, 503, 504) and attempt == 0:
-                await _wait_for_gateway(30.0); continue
+            if r.status_code in (502, 503, 504) and attempt == 0 and gateway_available():
+                _mark_gw_failure()
+                await asyncio.sleep(1.0)
+                continue
             _stats["last_error"] = f"OpenClaw HTTP {r.status_code}: {r.text[:200]}"
             return ""
         except (httpx.ReadTimeout, httpx.ConnectTimeout):
             _stats["last_error"] = "OpenClaw timeout"
+            _mark_gw_failure()
             return ""
         except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as e:
-            if attempt == 0: await _wait_for_gateway(30.0); continue
+            _stats["last_error"] = f"OpenClaw connect: {type(e).__name__}"
+            _mark_gw_failure()
             return ""
         except Exception as e:
             _stats["last_error"] = f"{type(e).__name__}: {e}"
@@ -137,14 +185,19 @@ async def _call_openclaw(messages, max_tokens, temperature, timeout=25.0):
     return ""
 
 async def _call_pollinations_direct(messages, max_tokens, timeout=30.0, retries=2):
+    # Rate-limit cooldown: анонимный тир Pollinations жёстко ограничен,
+    # после 402 делаем глобальную паузу, чтобы не долбить бесполезно
+    global _poll_skip_until
+    if time.time() < _poll_skip_until:
+        return ""
     if _client is None: await initialize()
-    payload = {"model": _POLLINATIONS_MODEL, "messages": messages, "temperature": 0.9, "max_tokens": max_tokens, "stream": False, "referrer": "dasha-bot", "reasoning_effort": "low"}
+    # ВАЖНО: без referrer/reasoning_effort — referrer ведёт на платный тир (402)
+    payload = {"model": _POLLINATIONS_MODEL, "messages": messages, "temperature": 0.9, "max_tokens": max_tokens, "stream": False}
     sem = _get_pollinations_sem()
     for attempt in range(retries + 1):
         try:
             t_start = time.time()
             headers = _pollinations_headers()
-            headers["Referer"] = "dasha-bot"
             async with sem:
                 r = await _client.post(_POLLINATIONS_URL, json=payload, timeout=timeout, headers=headers)
             elapsed = time.time() - t_start
@@ -160,6 +213,11 @@ async def _call_pollinations_direct(messages, max_tokens, timeout=30.0, retries=
                     if reasoning:
                         parts = reasoning.split(".")
                         return ".".join(parts[-3:]).strip()[:500]
+            if r.status_code in (402, 429):
+                # Платный/лимитный тир: пауза 90с на все pollinations-вызовы
+                _poll_skip_until = time.time() + 90
+                _stats["last_error"] = f"Pollinations {r.status_code} (cooldown 90s)"
+                return ""
             if elapsed < 5.0 and attempt < retries:
                 await asyncio.sleep(2.0)
                 continue
@@ -172,6 +230,9 @@ async def _call_pollinations_direct(messages, max_tokens, timeout=30.0, retries=
     return ""
 
 async def _call_pollinations_get(prompt, timeout=12.0):
+    global _poll_skip_until
+    if time.time() < _poll_skip_until:
+        return ""
     if _client is None: await initialize()
     from urllib.parse import quote
     url = f"https://text.pollinations.ai/{quote(prompt)}"
@@ -184,8 +245,60 @@ async def _call_pollinations_get(prompt, timeout=12.0):
         if r.status_code == 200:
             text = r.text.strip()
             if text and len(text) > 2: return text[:2000]
+        if r.status_code in (402, 429):
+            _poll_skip_until = time.time() + 90
         return ""
     except: return ""
+
+# ─── Прямые провайдеры (мимо шлюза): Groq и Gemini ──────────────────────────
+# Если ключи есть в секретах — они дают быстрые и качественные ответы даже
+# когда OpenClaw шлюз недоступен, и не зависят от лимитов Pollinations.
+
+def _groq_config():
+    key = config.GROQ_API_KEY
+    return key
+
+async def _call_groq_direct(messages, max_tokens, timeout=25.0):
+    """Groq llama-3.3-70b — быстрый и качественный (бесплатный тир щедрый)."""
+    key = _groq_config()
+    if not key: return ""
+    if _client is None: await initialize()
+    payload = {"model": "llama-3.3-70b-versatile", "messages": messages, "temperature": 0.9, "max_tokens": max_tokens, "stream": False}
+    try:
+        r = await _client.post("https://api.groq.com/openai/v1/chat/completions",
+                               json=payload, timeout=timeout, headers={"Authorization": f"Bearer {key}"})
+        if r.status_code == 200:
+            data = r.json()
+            choices = data.get("choices") or []
+            if choices:
+                content = (choices[0].get("message", {}).get("content", "") or "").strip()
+                if content: return content
+        elif r.status_code == 429:
+            _stats["last_error"] = "Groq 429 rate-limit"
+        return ""
+    except Exception as e:
+        _stats["last_error"] = f"Groq: {type(e).__name__}"
+        return ""
+
+async def _call_gemini_direct(messages, max_tokens, timeout=30.0):
+    """Gemini 2.0 Flash через OpenAI-совместимый эндпоинт."""
+    key = config.GEMINI_API_KEY
+    if not key: return ""
+    if _client is None: await initialize()
+    payload = {"model": "gemini-2.0-flash", "messages": messages, "temperature": 0.9, "max_tokens": max_tokens, "stream": False}
+    try:
+        r = await _client.post("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                               json=payload, timeout=timeout, headers={"Authorization": f"Bearer {key}"})
+        if r.status_code == 200:
+            data = r.json()
+            choices = data.get("choices") or []
+            if choices:
+                content = (choices[0].get("message", {}).get("content", "") or "").strip()
+                if content: return content
+        return ""
+    except Exception as e:
+        _stats["last_error"] = f"Gemini: {type(e).__name__}"
+        return ""
 
 _STATIC_FALLBACKS = {
     "greeting": ["Привет! Я Даша 😊", "Привет-привет! ☕", "Хей! Как настроение?"],
@@ -210,10 +323,25 @@ async def chat(prompt, system="", extra_context="", dialog_history=None, max_tok
     user_content = f"{extra_context}\n\n---\n\n{prompt}" if extra_context else prompt
     messages.append({"role": "user", "content": user_content})
 
+    # Прямые ключевые провайдеры (Groq/Gemini) — приоритет при наличии ключей:
+    # стабильный бесплатный тир, не зависит от шлюза и лимитов Pollinations
+    if config.GROQ_API_KEY:
+        out = await _call_groq_direct(messages, max_tokens)
+        if out:
+            _stats["success"] += 1
+            logger.info(f"AI groq-direct ({time.time()-t0:.1f}s) len={len(out)}")
+            return _strip_name_prefix(out)
+    if config.GEMINI_API_KEY:
+        out = await _call_gemini_direct(messages, max_tokens)
+        if out:
+            _stats["success"] += 1
+            logger.info(f"AI gemini-direct ({time.time()-t0:.1f}s) len={len(out)}")
+            return _strip_name_prefix(out)
+
     if fast:
         use_get = (not extra_context) and (not dialog_history) and len(prompt) < 400
         if use_get:
-            short_persona = "Ты Даша, девушка из Сочи. Женский род всегда. Отвечай живо, кратко (2-4 предложения). По-русски. Без выдуманных фактов. Не начинай с имени."
+            short_persona = "Ты Даша, дизайнер корпусной мебели из Абакана. Женский род всегда. Отвечай живо, кратко (2-4 предложения). По-русски. Без выдуманных фактов. Не начинай с имени."
             embedded = f"{short_persona}\n\nВопрос: {prompt}\n\nОтвет:"
             out = await _call_pollinations_get(embedded, 12.0)
             if out:
@@ -329,6 +457,7 @@ async def comment(prompt, extra_context="", mood="", dialog_history=None):
     return await chat(prompt, system=system, extra_context=extra_context, dialog_history=dialog_history, max_tokens=400, temperature=0.95, allow_static_fallback=False)
 
 async def vision(prompt, image_data_uri, system="", max_tokens=300):
+    """Vision-запрос: OpenClaw (если жив) или прямые мультимодальные провайдеры."""
     global _stats
     _stats["requests"] += 1
     t0 = time.time()
@@ -336,19 +465,41 @@ async def vision(prompt, image_data_uri, system="", max_tokens=300):
     messages = []
     if system: messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": image_data_uri}}]})
-    payload = {"model": _MODEL, "messages": messages, "max_tokens": max_tokens, "temperature": 0.7, "stream": False}
+    # Tier 1: OpenClaw gateway
+    if gateway_available():
+        payload = {"model": _MODEL, "messages": messages, "max_tokens": max_tokens, "temperature": 0.7, "stream": False}
+        try:
+            r = await _client.post(_ENDPOINT, json=payload, timeout=30.0)
+            if r.status_code == 200:
+                data = r.json()
+                choices = data.get("choices") or []
+                if choices:
+                    content = (choices[0].get("message", {}).get("content", "") or "").strip()
+                    if content:
+                        _stats["success"] += 1; _stats["openclaw_ok"] += 1
+                        return content
+        except Exception:
+            _mark_gw_failure()
+    # Tier 2: Pollinations multimodal (openai model поддерживает vision)
     try:
-        r = await _client.post(_ENDPOINT, json=payload, timeout=30.0)
+        payload = {"model": "openai", "messages": messages, "max_tokens": max_tokens, "temperature": 0.7, "stream": False, "referrer": "dasha-bot"}
+        headers = _pollinations_headers()
+        headers["Referer"] = "dasha-bot"
+        r = await _client.post(_POLLINATIONS_URL, json=payload, timeout=45.0, headers=headers)
         if r.status_code == 200:
             data = r.json()
             choices = data.get("choices") or []
             if choices:
-                content = (choices[0].get("message", {}).get("content", "") or "").strip()
+                content = (choices[0].get("message", {}) or {}).get("content", "") or ""
+                content = content.strip()
                 if content:
-                    _stats["success"] += 1; _stats["openclaw_ok"] += 1
-                    return content
+                    _stats["success"] += 1; _stats["pollinations_backup"] += 1
+                    logger.info(f"AI vision=pollinations ({time.time()-t0:.1f}s) len={len(content)}")
+                    return _strip_pollinations_ads(content)
         _stats["fail"] += 1
-    except: _stats["fail"] += 1
+    except Exception as e:
+        _stats["fail"] += 1
+        _stats["last_error"] = f"vision: {type(e).__name__}: {e}"
     return ""
 
 async def transcribe_audio(audio_data_uri, timeout=30.0):
@@ -371,5 +522,3 @@ async def transcribe_audio(audio_data_uri, timeout=30.0):
         _stats["fail"] += 1
     except: _stats["fail"] += 1
     return ""
-
-def stats(): return dict(_stats)

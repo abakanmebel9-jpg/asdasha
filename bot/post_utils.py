@@ -120,7 +120,8 @@ def clean_post_text(text: str, bot_name: str = "Даша") -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\s+([,.;:!?])", r"\1", text)
-    text = re.sub(r"([,.;:!?])([^\s\d\n.])", r"\1 \2", text)
+    # Не вставлять пробел между знаками препинания (иначе "!!" → "! !")
+    text = re.sub(r"([,.;:!?])([^\s\d\n.,;:!?])", r"\1 \2", text)
     return text.strip()
 
 

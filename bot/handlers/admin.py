@@ -18,7 +18,7 @@ def _is_admin(message):
 async def cmd_stats(message):
     if not _is_admin(message): return
     s = ai_client.stats()
-    await message.reply(f"📊 Статистика AI:\nЗапросов: {s.get('requests',0)}\nOpenClaw: {s.get('openclaw_ok',0)}\nPollinations: {s.get('pollinations_backup',0)}\nStatic: {s.get('static_fallback',0)}\nОшибок: {s.get('fail',0)}\nПоследняя: {s.get('last_error','—')[:80]}")
+    await message.reply(f"📊 Статистика AI:\nЗапросов: {s.get('requests',0)}\nOpenClaw: {s.get('openclaw_ok',0)}\nPollinations: {s.get('pollinations_backup',0)}\nStatic: {s.get('static_fallback',0)}\nОшибок: {s.get('fail',0)}\nШлюз: {s.get('gateway','—')}\nПоследняя ошибка: {s.get('last_error','—')[:80]}")
 
 @admin_router.message(Command("providers"))
 async def cmd_providers(message):

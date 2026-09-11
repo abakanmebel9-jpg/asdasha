@@ -12,3 +12,4 @@ logs/
 *.secret
 .DS_Store
 Thumbs.db
+venv/*

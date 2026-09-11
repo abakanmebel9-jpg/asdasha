@@ -1,4 +1,4 @@
-"""Даша Group handler — active participation + web search + partners + site content."""
+"""Даша Group handler — мебельная экспертиза + web search + каталог сайта."""
 import asyncio, hashlib, logging, random, re, time
 from typing import List
 from aiogram import Router, F
@@ -12,7 +12,6 @@ from bot.reactions import maybe_react
 from bot.safe_send import safe_reply, safe_send
 from bot.web_search import verify_claim, research_topic, first_url, all_urls
 from bot.media_handler import extract_caption
-from bot.partners import partner_manager
 from bot.persona import COMMENT_PROMPT, EVENT_PROMPT, DIRECT_PROMPT, TOPIC_PROMPT
 from ai import client as ai_client
 
@@ -121,31 +120,28 @@ async def _generate_group_response(message, text, directed):
     except: summaries = []
     extra_ctx = build_group_context(message, recent_text, memory_facts, author_profile, summaries)
 
-    # Partner links
+    # База знаний: материалы, стили, размеры (строго мебельная экспертиза)
     try:
-        await partner_manager.refresh_if_needed()
-        links = partner_manager.get_all_partner_links_for_dialog(text, max_programs=2)
-        if links:
-            extra_ctx += "\n\nПартнёрские ссылки (вставь ОДНУ если к месту, естественно, не в каждом ответе):\n"
-            for pl in links: extra_ctx += f"- {pl['name']} ({pl.get('label','')}): {pl['url']}\n"
+        from bot.dasha import build_knowledge_context
+        kb = build_knowledge_context(text)
+        if kb:
+            extra_ctx += "\n\nСправка из базы знаний мебельного производства (используй, если уместно, своими словами):\n" + kb
     except: pass
 
-    extra_ctx += "\n\nМожешь иногда (1 из 6 сообщений, если к месту) посоветовать каналы @sochiautoparts (авто-новости) или @bmw_mpower_club (BMW клуб), или магазин sochiautoparts.ru/shop."
+    extra_ctx += "\n\nМожешь иногда (1 из 6 сообщений, если к месту) посоветовать канал @abakan_mebel (идеи интерьера) или сайт abakanmebel.online — кухни и корпусная мебель на заказ в Абакане, телефон +7 (913) 448-37-17."
 
-    # Site content (products/posts)
+    # Каталог сайта: товары/посты abakanmebel.online (только по мебельным темам)
     try:
         t_lower = (text or "").lower()
-        is_shopping = any(k in t_lower for k in ["купить", "магазин", "цена", "стоим", "заказ", "товар", "запчаст", "детал", "артикул", "подобрать", "найти", "выбор", "рекоменд"])
-        product_prob = 0.5 if is_shopping else 0.25
-        post_prob = 0.25 if is_shopping else 0.12
-        if random.random() < product_prob:
+        is_furniture = any(k in t_lower for k in ["мебел", "кухн", "шкаф", "гардероб", "прихож", "фасад", "столешниц", "мдф", "лдсп", "массив", "фурнитур", "купить", "заказ", "цена", "стоим"])
+        if is_furniture:
             from bot import site_content as sc
-            prod = await sc.relevant_product(text) if text else await sc.random_product()
-            if prod: extra_ctx += "\n\nТовар из магазина sochiautoparts.ru/shop (упомяни если к месту):\n" + sc.format_product_for_context(prod)
-        if random.random() < post_prob:
-            from bot import site_content as sc
-            post = await sc.random_post()
-            if post: extra_ctx += "\n\nСвежий пост на сайте (можешь поделиться): " + sc.format_post_for_context(post)
+            if random.random() < 0.5:
+                prod = await sc.relevant_product(text) if text else await sc.random_product()
+                if prod: extra_ctx += "\n\nРешение из каталога abakanmebel.online (упомяни если к месту, естественно):\n" + sc.format_product_for_context(prod)
+            if random.random() < 0.25:
+                post = await sc.random_post()
+                if post: extra_ctx += "\n\nПолезный пост с сайта (можешь поделиться): " + sc.format_post_for_context(post)
     except: pass
 
     # Web search

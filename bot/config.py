@@ -39,7 +39,9 @@ class BotConfig:
     CF_API_TOKEN_1: str = field(default_factory=lambda: _env("CF_API_TOKEN_1"))
 
     DB_PATH: str = field(default_factory=lambda: _env("DB_PATH", "data/dasha.db"))
-    PARTNERS_URL: str = field(default_factory=lambda: _env("PARTNERS_URL", "https://sochiautoparts.ru/partners.json"))
+
+    # Источник мебельных новостей для автопостинга в канал
+    NEWS_URL: str = field(default_factory=lambda: _env("NEWS_URL", "https://raw.githubusercontent.com/abakanmebel9-jpg/par/main/data/furniture-news.json"))
 
     CHANNEL_ID: str = field(default_factory=lambda: _env("CHANNEL_ID"))
     CHANNEL_USERNAME: str = field(default_factory=lambda: _env("CHANNEL_USERNAME", "abakan_mebel"))
