@@ -14,8 +14,12 @@ logger = logging.getLogger("dasha.post_utils")
 
 # ─── Smart Truncation ───────────────────────────────────────────────────────
 
-def smart_truncate(text: str, limit: int, footer_len: int = 0) -> str:
-    """Truncate text at natural boundary (paragraph > sentence > word). Appends …"""
+def smart_truncate(text: str, limit: int, footer_len: int = 0, append_ellipsis: bool = True) -> str:
+    """Truncate text at natural boundary (paragraph > sentence > word).
+
+    append_ellipsis=False — обрезка на естественной границе БЕЗ «…»:
+    пост канала с «…» перед футером выглядит оборванным.
+    """
     if not text:
         return ""
     effective_limit = limit - footer_len - 3
@@ -24,36 +28,77 @@ def smart_truncate(text: str, limit: int, footer_len: int = 0) -> str:
     if len(text) <= effective_limit:
         return text
 
+    tail = "…" if append_ellipsis else ""
+
     for i in range(effective_limit, max(effective_limit - 200, 0), -1):
         if i < len(text) and text[i:i+2] == "\n\n":
-            return text[:i].rstrip() + "…"
+            return text[:i].rstrip() + tail
 
     for i in range(effective_limit, max(effective_limit - 200, 0), -1):
         if i < len(text) and text[i] in ".!?\n" and (i + 1 >= len(text) or text[i+1] in " \n\t"):
-            return text[:i+1].rstrip() + "…"
+            return text[:i+1].rstrip() + tail
 
     for i in range(effective_limit, max(effective_limit - 100, 0), -1):
         if i < len(text) and text[i] == "\n":
-            return text[:i].rstrip() + "…"
+            return text[:i].rstrip() + tail
 
     for i in range(effective_limit, max(effective_limit - 50, 0), -1):
         if i < len(text) and text[i] == " ":
-            return text[:i].rstrip() + "…"
+            return text[:i].rstrip() + tail
 
-    return text[:effective_limit].rstrip() + "…"
+    return text[:effective_limit].rstrip() + tail
 
 
-def smart_truncate_html(text: str, limit: int, footer_len: int = 0) -> str:
+def smart_truncate_html(text: str, limit: int, footer_len: int = 0, append_ellipsis: bool = True) -> str:
     """Smart truncation that preserves HTML tags (closes unclosed <a> tags)."""
     if not text:
         return ""
-    truncated = smart_truncate(text, limit, footer_len)
+    truncated = smart_truncate(text, limit, footer_len, append_ellipsis=append_ellipsis)
     # Count unclosed <a> tags
     open_count = truncated.count("<a ")
     close_count = truncated.count("</a>")
     if open_count > close_count:
         truncated += "</a>" * (open_count - close_count)
     return truncated
+
+
+# ─── Truncation Repair (max_tokens обрывы) ──────────────────────────────────
+
+def finish_sentences(text: str) -> str:
+    """Ремонт оборванного AI-ответа (finish_reason=length).
+
+    Если текст не заканчивается завершающим знаком (.!?…), срезаем хвост
+    до последнего завершённого предложения. Убираем «…»-хвосты, обрывки
+    вида «и», «в», «—» и строки с незакрытым «Плюсы:» без содержимого.
+    """
+    if not text:
+        return ""
+    t = text.strip()
+    # Зачистка хвоста: дефисы/тире/пробелы, затем «…»-символы и многоточия.
+    # ОДНУ финальную точку не трогаем (законченное предложение).
+    t = re.sub(r"[\s\-—]+$", "", t)
+    t = re.sub(r"(…\s*)+$", "", t).rstrip()  # только хвостовые «…»
+    t = re.sub(r"\.{4,}$", ".", t)
+    t = re.sub(r"\.{2,3}$", ".", t)
+    if not t:
+        return ""
+    last = t[-1]
+    if last in ".!?":
+        return t
+    # Ищем последнее завершённое предложение
+    for i in range(len(t) - 1, -1, -1):
+        ch = t[i]
+        if ch in ".!?":
+            # Завершение предложения: после знака — конец, пробел, перенос, кавычка или скобка
+            nxt = t[i + 1] if i + 1 < len(t) else ""
+            if nxt == "" or nxt in " \n\t»)\"]":
+                cut = t[:i + 1].rstrip()
+                # Отрезаем также оборванную строку-заголок ("Плюсы:" без содержимого)
+                lines = cut.split("\n")
+                while len(lines) > 1 and lines[-1].strip().endswith(":"):
+                    lines.pop()
+                return "\n".join(lines).strip()
+    return t
 
 
 # ─── Text Cleaning ──────────────────────────────────────────────────────────

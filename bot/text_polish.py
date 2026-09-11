@@ -162,3 +162,62 @@ def dedupe_contacts(text: str) -> str:
                 seen.add(url)
 
     return text
+
+
+# ─── HTML-стилизация поста канала ────────────────────────────────────────────
+
+# Структурные лейблы, которые выделяем жирным (текст уже HTML-escaped)
+_BOLD_LABELS = [
+    "Вариант 1", "Вариант 2", "Вариант А", "Вариант Б",
+    "Миф:", "Правда:", "Откуда миф", "Почему так думают",
+    "Плюсы:", "Минусы:", "Вывод:", "Совет:", "Важно:",
+    "Мой фаворит", "Мой выбор", "Фаворит",
+    "История из проекта", "Что было:", "Что сделали:", "Что получилось:",
+    "До:", "После:", "Итог:", "Практика показывает",
+]
+
+_BOLD_LINE_PREFIXES = ("🅰", "🅱", "🅰️", "🅱️")
+
+
+def stylize_post_html(text: str) -> str:
+    """Детерминированная HTML-стилизация поста канала (текст уже escaped, без тегов).
+
+    1. Жирные структурные лейблы: «Плюсы:», «Миф:», «Вариант 1:» → <b>…</b>
+       (все вхождения в строке, только на границе слова)
+    2. Строки-варианты (🅰/🅱) — вся строка жирным
+    3. Разделитель «· · ·» перед блоком хештегов
+    4. Дефис-маркеры в начале строки → «• »
+    Возвращает текст с тегами <b> (Telegram parse_mode=HTML).
+    """
+    if not text:
+        return text
+
+    lines = text.split("\n")
+    out = []
+    # Регэкспы лейблов: граница слова слева + необязательное «:» справа
+    label_patterns = [
+        (re.compile(r"(?<![A-Za-zА-Яа-яЁё0-9])(" + re.escape(lbl) + r":?)"), lbl)
+        for lbl in _BOLD_LABELS
+    ]
+    for line in lines:
+        stripped = line.strip()
+        # Строки-варианты сравнения — целиком жирным
+        if stripped.startswith(_BOLD_LINE_PREFIXES) and len(stripped) > 2:
+            indent = line[:len(line) - len(line.lstrip())]
+            out.append(f"{indent}<b>{stripped}</b>")
+            continue
+        # Жирные лейблы (все вхождения в строке)
+        styled = line
+        for pat, _lbl in label_patterns:
+            styled = pat.sub(r"<b>\1</b>", styled)
+        # Дефис-маркер списка → bullet
+        if styled.lstrip().startswith("- "):
+            indent = styled[:len(styled) - len(styled.lstrip())]
+            styled = indent + "• " + styled.lstrip()[2:]
+        out.append(styled)
+
+    result = "\n".join(out)
+
+    # Разделитель перед блоком хештегов (строка из одних #тегов)
+    result = re.sub(r"\n\n(#[\wа-яё])", r"\n\n· · ·\n\1", result, flags=re.IGNORECASE)
+    return result

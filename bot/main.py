@@ -12,8 +12,9 @@ from bot.post_utils import (
     smart_truncate, smart_truncate_html, clean_post_text, validate_post_text,
     enforce_no_meetings, validate_image, title_fingerprint,
     text_fingerprint, url_normalize, date_context, UNIQUIFICATION_RULES,
+    finish_sentences,
 )
-from bot.text_polish import polish_grammar, linkify_contacts, dedupe_contacts
+from bot.text_polish import polish_grammar, linkify_contacts, dedupe_contacts, stylize_post_html
 from bot.post_types import get_type_block
 from bot.post_context import time_of_day_profile, seasonal_context
 
@@ -21,22 +22,41 @@ logging.basicConfig(level=getattr(logging, config.LOG_LEVEL.upper(), logging.INF
 logger = logging.getLogger("dasha.main")
 for noisy in ["aiogram.event", "httpx", "httpcore", "aiosqlite"]: logging.getLogger(noisy).setLevel(logging.WARNING)
 
-# Ключевые слова мебельной релевантности: постим только про мебель/интерьер/ремонт
-_NEWS_RELEVANT_KEYWORDS = [
-    "мебел", "кухн", "шкаф", "стол", "стул", "кресл", "диван", "кроват",
-    "гардероб", "прихож", "фасад", "столешниц", "материал", "лдсп", "мдф",
-    "массив", "фурнитур", "петл", "направляющ", "доводчик", "интерьер",
-    "дизайн", "ремонт", "планировк", "хранение", "полк", "комод", "тумб",
-    "гостин", "спальн", "детск", "ванн", "керамогранит", "плитк", "свет",
-    "цвет", "стил", "тренд", "furniture", "interior", "design", "kitchen",
-    "cabine", "лофт", "минимализм", "сканди", "классик",
-    "производств", "сборк", "замер", "заказ",
+# Ключевые слова мебельной релевантности, ДВА УРОВНЯ:
+# strong — тема точно мебельная (кухни, шкафы, фурнитура, производство мебели)
+_NEWS_STRONG_KEYWORDS = [
+    "мебел", "кухн", "шкаф", "гардероб", "прихож", "комод", "тумб",
+    "стол", "стул", "кресл", "диван", "кроват", "фасад", "фурнитур",
+    "лдсп", "мдф", "дсп", "массив", "столешниц", "петл", "направляющ",
+    "доводчик", "купо", "купе", "полк", "цоколь", "фартук", "мойк",
+    "furniture", "kitchen", "cabine", "mebel",
+]
+# weak — интерьер/ремонт контекст (допускаем, только если нет чужих тем)
+_NEWS_WEAK_KEYWORDS = [
+    "интерьер", "ремонт", "планировк", "хранение", "квартир", "спальн",
+    "гостин", "детск", "ванн", "санузл", "коридор", "кладов", "ниш",
+    "дизайн проект", "дизайн-проект", "дизайнер интерьер",
+]
+# Чужие темы — никогда не постим, даже если в тексте мелькает «дизайн»
+_NEWS_EXCLUDE_KEYWORDS = [
+    "спорт", "футбол", "хоккей", "баскетбол", "шахмат", "олимпиад",
+    "одежд", "модн", "показ", "бутик", "ткан", "обув", "косметик",
+    "автомобил", "дилер", "шиномонтаж", "ресторан", "отель", "кофейн",
+    "украшен", "ювелир", "эзотерик", "астролог", "гороскоп", "нумеролог",
 ]
 
 def _is_furniture_news(title: str, summary: str = "") -> bool:
-    """Проверяет, что новость относится к мебели/интерьеру/ремонту."""
+    """Проверяет, что новость относится к мебели/интерьеру/ремонту.
+
+    Строже прежнего: «дизайн/стиль/тренд» без мебельного контекста больше
+    не пропускаем (были посты про спортивные магазины и моду).
+    """
     t = f"{title} {summary}".lower()
-    return any(kw in t for kw in _NEWS_RELEVANT_KEYWORDS)
+    if any(kw in t for kw in _NEWS_EXCLUDE_KEYWORDS):
+        return False
+    if any(kw in t for kw in _NEWS_STRONG_KEYWORDS):
+        return True
+    return any(kw in t for kw in _NEWS_WEAK_KEYWORDS)
 
 def build_channel_footer() -> str:
     """Единый HTML-футер канала: кликабельные телефон и сайт."""
@@ -75,6 +95,29 @@ def _add_topic_hashtags(text: str, topic: str = "") -> str:
         tags = ["#мебельназаказ"]
     return text.rstrip() + "\n\n" + " ".join(tags)
 
+def _extract_hashtags(text: str) -> str:
+    """Извлекает хештеги из текста одной строкой (для повторной приклейки)."""
+    tags = re.findall(r"#[\wа-яё]+", text or "", flags=re.IGNORECASE)
+    return " ".join(dict.fromkeys(tags))
+
+
+def _visible_len(html_text: str) -> int:
+    """Длина видимого текста (Telegram считает лимиты после парсинга HTML)."""
+    import html as _h
+    return len(_h.unescape(re.sub(r"<[^>]+>", "", html_text or "")))
+
+
+def _style_channel_post(ai_text: str) -> str:
+    """Финальный конвейер качества тела поста: escape → хештеги → стилизация.
+
+    ВАЖНО: escape ДО стилизации (стилизация добавляет <b>), хештеги до стилизации
+    (стилизация ставит разделитель перед ними).
+    """
+    import html as _h
+    escaped = _h.escape(ai_text)
+    return stylize_post_html(escaped)
+
+
 def _furniture_knowledge_block(text: str) -> str:
     """Блок знаний из базы dasha.py по теме (материалы/стили/размеры)."""
     try:
@@ -91,6 +134,7 @@ from bot.handlers.groups import group_router
 from bot.handlers.channels import channel_router
 from bot.handlers.admin import admin_router
 from bot.handlers.inline import inline_router
+from bot.quiz import quiz_router
 
 OPENCLAW_STATE_DIR = os.getenv("OPENCLAW_STATE_DIR", str(Path.cwd() / ".openclaw-state"))
 _openclaw_proc = None
@@ -147,6 +191,7 @@ class DashaBot:
         self.bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
         self.dp = Dispatcher(storage=MemoryStorage())
         self.dp.include_router(admin_router)
+        self.dp.include_router(quiz_router)
         self.dp.include_router(chat_router)
         self.dp.include_router(group_router)
         self.dp.include_router(channel_router)
@@ -392,7 +437,7 @@ class DashaBot:
             f"Требования: 600-900 знаков, живо, с эмодзи в тему, 1-2 хештега в конце, "
             f"вопрос аудитории в самом конце. Женский род. По-русски."
         )
-        post = await ai_client.chat(prompt, system=CHANNEL_POST_PROMPT, max_tokens=800,
+        post = await ai_client.chat(prompt, system=CHANNEL_POST_PROMPT, max_tokens=1200,
                                     allow_static_fallback=False, prefer_pollinations=True)
         if not post:
             logger.warning("AI fallback topic: empty response")
@@ -400,17 +445,25 @@ class DashaBot:
         ai_text = clean_post_text(post, "Даша")
         ai_text = enforce_no_meetings(ai_text)
         ai_text = polish_grammar(ai_text)
+        # Ремонт обрыва по max_tokens: срезаем до последнего завершённого предложения
+        ai_text = finish_sentences(ai_text)
         is_valid, reason = validate_post_text(ai_text)
         if not is_valid or len(ai_text) < 250:
             logger.warning(f"AI fallback topic validation FAILED ({reason}, len={len(ai_text)}) — {topic[:40]}")
             return False
         ai_text = _add_topic_hashtags(ai_text, topic)
+        ai_text = _style_channel_post(ai_text)
 
         footer = build_channel_footer()
-        text_body = smart_truncate_html(ai_text, 4096, len(footer))
+        text_body = smart_truncate_html(ai_text, 3860, len(footer), append_ellipsis=False)
+        # Если при обрезке потерялись хештеги — приклеим заново
+        if "#" in ai_text and "#" not in text_body:
+            tags = _extract_hashtags(ai_text)
+            if tags:
+                text_body = (text_body.rstrip() + "\n\n· · ·\n" + tags)[:3860]
         text_full = text_body + footer
         try:
-            msg = await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
+            msg = await self.bot.send_message(channel_id, text_full, parse_mode=ParseMode.HTML)
             await self._react_to_own_post(channel_id, msg.message_id, text_full[:200])
             logger.info(f"Channel: posted AI FALLBACK ({len(text_full)} chars) — {topic[:40]}")
         except Exception as e:
@@ -462,6 +515,11 @@ class DashaBot:
 
         logger.info(f"Selected furniture news: {title[:60]} (imgs: {len(all_images)})")
 
+        # Адаптивная длина: с фото подпись ≤1024 видимых символов — просим короче;
+        # чисто текстовый пост может быть длиннее
+        has_media = len(all_images) >= 1
+        length_req = "до 680 знаков (коротко и ёмко)" if has_media else "800-1000 знаков"
+
         # Generate AI commentary (NO translation — furniture news is already in Russian)
         kb_block = _furniture_knowledge_block(f"{title} {summary}")
         type_block = get_type_block()
@@ -479,8 +537,8 @@ class DashaBot:
             f"\n\n{UNIQUIFICATION_RULES}\n\n"
             f"ОБЯЗАТЕЛЬНО:\n"
             f"1. Хук — вопрос/интригующее утверждение по теме новости (НЕ «Сегодня хочу поделиться» и не «Сегодня я расскажу»)\n"
-            f"2. Экспертный разбор: 800-1000 знаков от первого лица, личный опыт\n"
-            f"3. Вывод-совет + вопрос аудитории + 1-2 хештега\n\n"
+            f"2. Экспертный разбор: {length_req} от первого лица, личный опыт\n"
+            f"3. Вывод-совет + вопрос аудитории + 1-2 хештега ОТДЕЛЬНОЙ строкой в самом конце\n\n"
             f"СТИЛЬ (как пишет Даша):\n"
             f"- Даша — дизайнер корпусной мебели из Абакана: 'Как дизайнер, я всегда...'\n"
             f"- Материалы: массив, ЛДСП, МДФ, керамогранит, стекло; фурнитура\n"
@@ -494,7 +552,7 @@ class DashaBot:
         )
         ai_commentary = await ai_client.chat(
             prompt, system=channel_prompt,
-            max_tokens=800, temperature=0.9, allow_static_fallback=False, prefer_pollinations=True
+            max_tokens=1200, temperature=0.9, allow_static_fallback=False, prefer_pollinations=True
         )
 
         if not ai_commentary:
@@ -509,6 +567,9 @@ class DashaBot:
 
         # Russian typography polish
         ai_text = polish_grammar(ai_text)
+
+        # Ремонт обрыва по max_tokens: срезаем до последнего завершённого предложения
+        ai_text = finish_sentences(ai_text)
 
         # Validate (politics/NSFW/furniture-relevance)
         is_valid, reason = validate_post_text(ai_text)
@@ -529,18 +590,32 @@ class DashaBot:
         # Хештеги по теме, если AI их не добавил
         ai_text = _add_topic_hashtags(ai_text, title)
 
-        # Text fingerprint dedup
+        # Text fingerprint dedup (по видимому тексту, до HTML-стилизации)
         fp = text_fingerprint(ai_text)
         if await db.is_news_posted(f"fp:{fp}"):
             logger.info(f"Text fingerprint already posted — skip: {fp[:16]}")
             return False
 
+        # HTML-escape тела + жирные структурные лейблы + разделитель перед хештегами
+        ai_text = _style_channel_post(ai_text)
+
         # Единый HTML-футер с кликабельным телефоном и сайтом
         FOOTER = build_channel_footer()
 
-        # Smart truncate (HTML-safe, reserves footer space)
-        caption_body = smart_truncate_html(ai_text, 1024, len(FOOTER))
-        text_body = smart_truncate_html(ai_text, 4096, len(FOOTER))
+        # Smart truncate (HTML-safe, reserves footer space, БЕЗ «…» перед футером).
+        # Бюджеты по RAW-длине консервативнее видимой (виз ≤ raw), поэтому лимиты
+        # Telegram (1024 подпись / 4096 текст) гарантированно не нарушаются.
+        caption_body = smart_truncate_html(ai_text, 780, len(FOOTER), append_ellipsis=False)
+        text_body = smart_truncate_html(ai_text, 3860, len(FOOTER), append_ellipsis=False)
+        # Если при обрезке потерялись хештеги — приклеиваем заново (они короткие, помещаются)
+        if "#" in ai_text and "#" not in caption_body:
+            tags = _extract_hashtags(ai_text)
+            if tags:
+                caption_body = (caption_body.rstrip() + "\n\n· · ·\n" + tags)[:860]
+        if "#" in ai_text and "#" not in text_body:
+            tags = _extract_hashtags(ai_text)
+            if tags:
+                text_body = (text_body.rstrip() + "\n\n· · ·\n" + tags)[:3860]
         caption_full = caption_body + FOOTER
         text_full = text_body + FOOTER
 
@@ -567,11 +642,11 @@ class DashaBot:
                 if img_resp.status_code == 200 and validate_image(img_resp.content):
                     from aiogram.types import BufferedInputFile
                     photo_file = BufferedInputFile(img_resp.content, filename="news.jpg")
-                    msg = await self.bot.send_photo(channel_id, photo_file, caption=caption_full[:1024], parse_mode=ParseMode.HTML)
+                    msg = await self.bot.send_photo(channel_id, photo_file, caption=caption_full, parse_mode=ParseMode.HTML)
                     posted = True
                     if msg:
                         await self._react_to_own_post(channel_id, msg.message_id, caption_full[:200])
-                    logger.info(f"Channel: posted NEWS+photo (caption {len(caption_full[:1024])}) — {title[:40]}")
+                    logger.info(f"Channel: posted NEWS+photo (caption vis={_visible_len(caption_full)}) — {title[:40]}")
                 else:
                     logger.warning(f"Image validation failed: HTTP {img_resp.status_code}, {len(img_resp.content)} bytes")
             except Exception as e:
@@ -580,10 +655,10 @@ class DashaBot:
         # Case C: no image → send_message (HTML)
         if not posted:
             try:
-                msg = await self.bot.send_message(channel_id, text_full[:4096], parse_mode=ParseMode.HTML)
+                msg = await self.bot.send_message(channel_id, text_full, parse_mode=ParseMode.HTML)
                 posted = True
                 await self._react_to_own_post(channel_id, msg.message_id, text_full[:200])
-                logger.info(f"Channel: posted NEWS text-only ({len(text_full[:4096])} chars) — {title[:40]}")
+                logger.info(f"Channel: posted NEWS text-only ({len(text_full)} chars) — {title[:40]}")
             except Exception as e:
                 logger.error(f"Channel post failed (HTML): {e}")
                 # Fallback: plain text (strip HTML tags)
@@ -628,7 +703,7 @@ class DashaBot:
                     if r.status_code == 200 and validate_image(r.content):
                         buf = BufferedInputFile(r.content, filename="news.jpg")
                         if first:
-                            media.append(InputMediaPhoto(media=buf, caption=caption_full[:1024], parse_mode=ParseMode.HTML))
+                            media.append(InputMediaPhoto(media=buf, caption=caption_full, parse_mode=ParseMode.HTML))
                             first = False
                         else:
                             media.append(InputMediaPhoto(media=buf))

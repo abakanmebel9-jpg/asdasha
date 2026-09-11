@@ -45,7 +45,7 @@ class BotConfig:
 
     CHANNEL_ID: str = field(default_factory=lambda: _env("CHANNEL_ID"))
     CHANNEL_USERNAME: str = field(default_factory=lambda: _env("CHANNEL_USERNAME", "abakan_mebel"))
-    PHONE: str = field(default_factory=lambda: _env("PHONE", "+79134483717"))
+    PHONE: str = field(default_factory=lambda: _env("PHONE", "+7 (913) 448-37-17"))
 
     GROUP_PROACTIVE_PROB: float = field(default_factory=lambda: float(_env("GROUP_PROACTIVE_PROB", "0.65")))
     GROUP_MAX_PER_MINUTE: int = field(default_factory=lambda: int(_env("GROUP_MAX_PER_MINUTE", "15")))

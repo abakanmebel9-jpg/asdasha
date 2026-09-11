@@ -45,6 +45,8 @@ _HELP_TEXT = (
     "/consult — кнопки связи: звонок, WhatsApp, сайт\n"
     "/catalog — популярные решения с ценами\n"
     "/price — ориентиры по ценам\n"
+    "/quiz — квиз «Подбери свою мебель» 🧩\n"
+    "/reviews — отзывы клиентов ⭐\n"
     "/fact — интересный факт о мебели\n"
     "/clear — забыть историю чата\n"
     "/mood — моё настроение\n"
@@ -126,6 +128,16 @@ async def cmd_fact(message):
     """Мебельный факт — работает и в личке, и в группах."""
     from bot.dasha import random_furniture_fact
     await message.reply(random_furniture_fact())
+
+@chat_router.message(Command("reviews"))
+async def cmd_reviews(message):
+    """Отзывы клиентов — 3 шт. с ротацией, личка и группы."""
+    from bot.reviews import format_reviews
+    text = format_reviews(3)
+    try:
+        await message.reply(text[:4000], reply_markup=_contacts_keyboard())
+    except Exception:
+        await message.reply(text[:4000])
 
 _FURNITURE_HINTS = [
     "кухн", "шкаф", "мебел", "стол", "столешниц", "фасад", "мдф", "лдсп",
