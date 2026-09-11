@@ -234,6 +234,7 @@ def calculate(kind: str, sub: str, size: str, material: str = "") -> str:
         f"{head}\n\n"
         f"💰 Ориентировочно: <b>{_fmt_range(low * 1000, high * 1000)}</b>\n\n"
         f"📌 {note}\n\n"
+        f"🗃 Идеи наполнения и хранения для этой мебели — команда /storage.\n\n"
         f"📐 Точную цену назовём после бесплатного замера — "
         f"замер ни к чему не обязывает."
     )

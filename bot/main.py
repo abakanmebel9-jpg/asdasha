@@ -58,12 +58,36 @@ def _is_furniture_news(title: str, summary: str = "") -> bool:
         return True
     return any(kw in t for kw in _NEWS_WEAK_KEYWORDS)
 
+# ─── Раунд 10: ротация CTA-строки в футере канала ────────────────────────────
+# Каждый пост заканчивается подсказкой-действием (лид-магнит на функции бота).
+# Анти-повтор: не повторяем CTA чаще, чем через 3 поста (in-memory, рестарт
+# сбрасывает — не критично, это косметика; хештеги персистентны, т.к. важнее).
+_CTA_LINES = [
+    "📐 Замер и 3D-проект — бесплатно → пишите Даше: asdasha_bot",
+    "🧮 Прикинуть бюджет за минуту: asdasha_bot → команда /calc",
+    "🗃 Идеи хранения по комнатам: asdasha_bot → команда /storage",
+    "🪵 Подберём материал под ваш бюджет — консультация в asdasha_bot",
+    "📋 От замера до сборки — этапы работы: asdasha_bot → /process",
+    "❓ Частые вопросы по заказу: asdasha_bot → /faq",
+]
+_cta_recent: list = []  # последние 3 CTA (раунд 10)
+
+
+def _pick_cta() -> str:
+    pool = [c for c in _CTA_LINES if c not in _cta_recent] or list(_CTA_LINES)
+    cta = random.choice(pool)
+    _cta_recent.append(cta)
+    del _cta_recent[:-3]
+    return cta
+
+
 def build_channel_footer() -> str:
-    """Единый HTML-футер канала: кликабельные телефон и сайт."""
+    """Единый HTML-футер канала: ротация CTA + кликабельные телефон и сайт."""
     phone = config.PHONE or "+7 (913) 448-37-17"
     tel_digits = re.sub(r"[^\d+]", "", phone)
     return (
-        f'\n\n🛋 Автор — <a href="https://t.me/asdasha_bot">Даша</a> | Кухни на заказ в Абакане\n'
+        f"\n\n{_pick_cta()}\n"
+        f'🛋 Автор — <a href="https://t.me/asdasha_bot">Даша</a> | Кухни на заказ в Абакане\n'
         f'📞 <a href="tel:{tel_digits}">{phone}</a> | '
         f'🌐 <a href="https://abakanmebel.online">abakanmebel.online</a>'
     )
@@ -343,6 +367,8 @@ from bot.calculator import calc_router
 from bot.lead_forms import lead_router
 from bot.inspiration import inspiration_router
 from bot.storage import storage_router
+from bot.compare import compare_router
+from bot.mistakes import mistakes_router
 
 OPENCLAW_STATE_DIR = os.getenv("OPENCLAW_STATE_DIR", str(Path.cwd() / ".openclaw-state"))
 _openclaw_proc = None
@@ -404,6 +430,8 @@ class DashaBot:
         self.dp.include_router(calc_router)
         self.dp.include_router(inspiration_router)
         self.dp.include_router(storage_router)
+        self.dp.include_router(compare_router)
+        self.dp.include_router(mistakes_router)
         self.dp.include_router(chat_router)
         self.dp.include_router(group_router)
         self.dp.include_router(channel_router)
@@ -496,6 +524,8 @@ class DashaBot:
                 BotCommand(command="care", description="Уход за мебелью 🧼"),
                 BotCommand(command="terms", description="Мебельный словарь 📖"),
                 BotCommand(command="storage", description="Идеи хранения 🗃"),
+                BotCommand(command="compare", description="Сравнение материалов ⚖️"),
+                BotCommand(command="mistakes", description="5 ошибок при заказе ⚠️"),
                 BotCommand(command="about", description="О производстве 🏭"),
                 BotCommand(command="fact", description="Факт о мебели 💡"),
             ]

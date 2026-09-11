@@ -239,6 +239,12 @@ _SPLIT_LABELS = [
     "Совет дизайнера:", "Совет:", "Решение:", "Ошибка:", "Лайфхак:",
     "Правило:", "Запомните:", "Результат:", "Пример:", "Антипример:",
     "Рекомендация:", "Заметка:", "Ответ:", "Важно:", "Факт:",
+    # Раунд 10: блоки из дайджеста/ухода/коммерции — тоже слипаются в одну строку
+    "История из проекта", "Вопрос:", "Тренд:",
+    "Цена:", "Гарантия:", "Сроки:",
+    "Уход:", "Хранение:", "Бюджет:",
+    "Практика показывает", "Опыт показывает",
+    "Обратите внимание:", "Важно знать:",
 ]
 
 # Маркеры списков: если в одной строке их 2+ — чек-лист слипся.
@@ -268,7 +274,9 @@ def _split_merged_labels(text: str) -> str:
         return text
     for lbl in _SPLIT_LABELS:
         text = re.sub(
-            r"([,.!?;…]\s+)(" + re.escape(lbl) + r")(?![0-9А-Яа-яЁё])",
+            # Раунд 10: пробел НЕ сохраняем в группе — раньше получался
+            # хвостовой пробел перед \n ("эстетика. \nМинусы:"), теперь "эстетика.\nМинусы:"
+            r"([,.!?;…])\s+(" + re.escape(lbl) + r")(?![0-9А-Яа-яЁё])",
             r"\1\n\2",
             text,
         )
@@ -277,6 +285,31 @@ def _split_merged_labels(text: str) -> str:
     # Чек-листные маркеры — построчно
     text = "\n".join(_split_marker_line(ln) for ln in text.split("\n"))
     return text
+
+
+# Раунд 10: дедуп хештегов — AI иногда пишет «#кухни … #Кухни», а система
+# может добавить тег, который уже есть в тексте. Первый вхождение сохраняем.
+_HTAG_PAT = re.compile(r"#[\wа-яё]+", flags=re.IGNORECASE)
+
+
+def _dedupe_hashtags(text: str) -> str:
+    if not text or "#" not in text:
+        return text
+    seen: set = set()
+    out, last = [], 0
+    for m in _HTAG_PAT.finditer(text):
+        key = m.group(0).lower()
+        out.append(text[last:m.start()])
+        if key in seen:
+            # Дубль: убираем вместе с одним пробелом перед ним (если есть)
+            if out and out[-1].endswith(" "):
+                out[-1] = out[-1][:-1]
+        else:
+            seen.add(key)
+            out.append(m.group(0))
+        last = m.end()
+    out.append(text[last:])
+    return "".join(out)
 
 
 def stylize_post_html(text: str) -> str:
@@ -290,10 +323,14 @@ def stylize_post_html(text: str) -> str:
     5. Цены: «95 000руб» / «95 000 ₽» → «95 000 ₽»
     6. Разделитель «· · ·» перед блоком хештегов
     7. Дефис-маркеры в начале строки → «• »
+    8. Раунд 10: гигиена пробелов (хвостовые перед \n), дедуп хештегов
     Возвращает текст с тегами <b> (Telegram parse_mode=HTML).
     """
     if not text:
         return text
+
+    # Раунд 10: повторяющиеся хештеги (в т.ч. в разных регистрах) — оставляем первый
+    text = _dedupe_hashtags(text)
 
     # Раунд 9: слипшиеся структурные блоки → каждый на своей строке
     text = _split_merged_labels(text)
@@ -360,6 +397,34 @@ def stylize_post_html(text: str) -> str:
 
     result = re.sub(r"(\d[\d\u00A0 ]{0,15}\d)\s?₽", _fmt_price, result)
 
+    # Раунд 10: гигиена — хвостовые пробелы/табы перед переносом строки
+    result = re.sub(r"[ \t]+\n", "\n", result)
+
+    # Раунд 10: хештеги, прилипшие к концу текстовой строки («… от 95 000 ₽. #кухни»),
+    # переезжают на свою строку — тогда разделитель «· · ·» встаёт перед ними.
+    result = _detach_trailing_hashtags(result)
+
     # Разделитель перед блоком хештегов (строка из одних #тегов)
     result = re.sub(r"\n\n(#[\wа-яё])", r"\n\n· · ·\n\1", result, flags=re.IGNORECASE)
     return result
+
+
+def _detach_trailing_hashtags(text: str) -> str:
+    """Если последняя строка — «текст … текст #тег1 #тег2», хештеги уходят вниз."""
+    if not text or "#" not in text:
+        return text
+    lines = text.rstrip().split("\n")
+    if not lines:
+        return text
+    last = lines[-1]
+    if last.lstrip().startswith("#"):
+        return text  # уже отдельная строка хештегов
+    m = re.match(
+        r"^(.+?)[ \t]+((?:#[\wа-яё]+)(?:[ \t]+#[\wа-яё]+)*)[ \t]*$",
+        last, flags=re.IGNORECASE,
+    )
+    if m:
+        # \n\n (пустая строка) — чтобы сработал разделитель «· · ·»
+        lines[-1] = m.group(1).rstrip() + "\n\n" + m.group(2)
+        return "\n".join(lines)
+    return text

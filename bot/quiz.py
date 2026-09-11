@@ -158,6 +158,7 @@ def _build_result(state: dict) -> str:
              f"\n🪵 <b>По материалам:</b> {mat_text}"]
     if product:
         parts.append(f"\n🛋 <b>Из каталога подходит:</b> {product}")
+    parts.append("\n🗃 <b>Бонус:</b> конкретные идеи хранения для этой комнаты — команда /storage")
     parts.append("\n\n📐 Точная стоимость — после бесплатного замера. Замер по Абакану и Хакасии 🚗")
     return "\n".join(parts)
 
