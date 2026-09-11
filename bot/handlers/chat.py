@@ -5,7 +5,7 @@
 """
 import asyncio, logging, random
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.enums import ChatAction
 from aiogram.filters import Command
 from bot.config import config
@@ -20,6 +20,19 @@ logger = logging.getLogger("dasha.chat")
 chat_router = Router()
 _MAX_HISTORY = 16
 
+PHONE = config.PHONE or "+7 (913) 448-37-17"
+PHONE_DIGITS = "".join(ch for ch in PHONE if ch.isdigit())
+
+
+def _contacts_keyboard() -> InlineKeyboardMarkup:
+    """Кнопки связи: звонок, WhatsApp, сайт, канал."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📞 Позвонить Даше", url=f"tel:+{PHONE_DIGITS}"),
+         InlineKeyboardButton(text="💬 WhatsApp", url=f"https://wa.me/{PHONE_DIGITS}")],
+        [InlineKeyboardButton(text="🌐 abakanmebel.online", url="https://abakanmebel.online"),
+         InlineKeyboardButton(text="📺 Канал @abakan_mebel", url="https://t.me/abakan_mebel")],
+    ])
+
 _HELP_TEXT = (
     "👋 Я Даша — дизайнер корпусной мебели из Абакана (abakanmebel.online).\n\n"
     "🛋 Чем помогу:\n"
@@ -28,13 +41,15 @@ _HELP_TEXT = (
     "• Идеи и планировка интерьера, советы по стилям\n"
     "• Фото помещения — подскажу решения 📷\n"
     "• Голосовые — тоже понимаю 🎤\n\n"
-    "📞 Консультация и замер: +7 (913) 448-37-17\n"
-    "🌐 abakanmebel.online | Канал: @abakan_mebel\n\n"
-    "Команды:\n"
+    "Мои команды (работают и в группах):\n"
+    "/consult — кнопки связи: звонок, WhatsApp, сайт\n"
+    "/catalog — популярные решения с ценами\n"
+    "/price — ориентиры по ценам\n"
     "/fact — интересный факт о мебели\n"
     "/clear — забыть историю чата\n"
     "/mood — моё настроение\n"
-    "/whoami — что я о тебе помню"
+    "/whoami — что я о тебе помню\n\n"
+    "📞 +7 (913) 448-37-17 | 🌐 abakanmebel.online | 📺 @abakan_mebel"
 )
 
 @chat_router.message(Command("start"), F.chat.type == "private")
@@ -67,8 +82,48 @@ async def cmd_whoami(message):
     if not profile: await message.reply("Пока ничего о тебе не знаю. Расскажи что-нибудь о себе 🙂")
     else: await message.reply(f"Вот что я о тебе помню:\n\n{profile}")
 
-@chat_router.message(Command("fact"), F.chat.type == "private")
+@chat_router.message(Command("consult"))
+async def cmd_consult(message):
+    """Кнопки связи — работает в личке и группах."""
+    u = message.from_user
+    if u and message.chat.type == "private":
+        await db.upsert_user(u.id, u.username or "", u.first_name or "", u.last_name or "", u.is_bot, in_private=True)
+    await message.reply(
+        f"🛋 Консультация и замер — бесплатно!\n\n"
+        f"📞 {PHONE}\n"
+        f"Замер по Абакану и Хакасии 🚗\n\n"
+        f"Выбирай удобный способ связи:",
+        reply_markup=_contacts_keyboard(),
+    )
+
+@chat_router.message(Command("catalog"))
+async def cmd_catalog(message):
+    """Популярные решения из каталога — в личке и группах."""
+    from bot.site_content import _PRODUCTS
+    lines = ["🛋 Популярные решения abakanmebel.online:\n"]
+    for p in _PRODUCTS[:8]:
+        lines.append(f"• {p['name']} — {p['from_price']}")
+        lines.append(f"  {p['desc'][:70]}…")
+    lines.append("\n📐 Точная цена — после бесплатного замера.")
+    try:
+        await message.reply("\n".join(lines)[:4000], reply_markup=_contacts_keyboard())
+    except Exception:
+        await message.reply("\n".join(lines)[:4000])
+
+@chat_router.message(Command("price"))
+async def cmd_price(message):
+    """Ориентиры цен из базы знаний — личка и группы."""
+    from bot.dasha import get_pricing_info
+    info = get_pricing_info()
+    text = f"💰 Ориентиры по ценам (корпусная мебель на заказ):\n\n{info}\n\n📐 Точная стоимость — после бесплатного замера:"
+    try:
+        await message.reply(text[:4000], reply_markup=_contacts_keyboard())
+    except Exception:
+        await message.reply(text[:4000])
+
+@chat_router.message(Command("fact"))
 async def cmd_fact(message):
+    """Мебельный факт — работает и в личке, и в группах."""
     from bot.dasha import random_furniture_fact
     await message.reply(random_furniture_fact())
 

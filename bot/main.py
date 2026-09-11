@@ -14,6 +14,8 @@ from bot.post_utils import (
     text_fingerprint, url_normalize, date_context, UNIQUIFICATION_RULES,
 )
 from bot.text_polish import polish_grammar, linkify_contacts, dedupe_contacts
+from bot.post_types import get_type_block
+from bot.post_context import time_of_day_profile, seasonal_context
 
 logging.basicConfig(level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO), format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("dasha.main")
@@ -357,8 +359,11 @@ class DashaBot:
             except Exception as e:
                 logger.error(f"Channel scheduler error: {e}")
 
-            # Jitter: интервал 27–36 мин — постинг выглядит живым, а не по крону
-            await asyncio.sleep(1620 + random.randint(0, 540))
+            # Ждём планового интервала (27–36 мин, джиттер) ИЛИ форс-поста (/post_now)
+            from bot.scheduler_control import wait_interval_or_force
+            forced = await wait_interval_or_force(1620 + random.randint(0, 540))
+            if forced:
+                logger.info("Scheduler: force post triggered — next cycle immediately")
 
     async def _post_ai_topic(self, topic: str, mood: str, channel_id: int):
         """Генерирует и публикует пост на заданную мебельную тему (fallback без новости).
@@ -368,11 +373,19 @@ class DashaBot:
         """
         from bot.persona import CHANNEL_POST_PROMPT
         from bot.post_utils import clean_post_text, title_fingerprint
+        from bot.post_types import get_type_block
+        from bot.post_context import time_of_day_profile, seasonal_context
         from aiogram.enums import ParseMode
 
         kb_block = _furniture_knowledge_block(topic)
+        type_block = get_type_block()
+        tod_label, tod_block = time_of_day_profile()
+        season = seasonal_context()
+        season_block = f"\nСезонный контекст: {season}." if season else ""
         prompt = (
             f"Напиши пост для канала @abakan_mebel на тему: {topic}.\n\n"
+            f"{type_block}\n\n"
+            f"{tod_block}{season_block}\n"
             f"Контекст: {date_context()}, настроение: {mood}\n"
             f"Даша — дизайнер корпусной мебели из Абакана. Личный опыт, конкретика: "
             f"материалы (массив, ЛДСП, МДФ), фурнитура, размеры, ошибки клиентов.{kb_block}\n\n"
@@ -451,15 +464,21 @@ class DashaBot:
 
         # Generate AI commentary (NO translation — furniture news is already in Russian)
         kb_block = _furniture_knowledge_block(f"{title} {summary}")
+        type_block = get_type_block()
+        tod_label, tod_block = time_of_day_profile()
+        season = seasonal_context()
+        season_block = f"\nСезонный контекст: {season}." if season else ""
         prompt = (
             f"Напиши пост для канала @abakan_mebel с комментарием на эту новость о мебели/интерьере.\n\n"
+            f"{type_block}\n\n"
+            f"{tod_block}{season_block}\n"
             f"Контекст: {date_context()}, настроение: {mood}\n\n"
             f"Заголовок новости: {title}\n"
             f"Краткое содержание: {summary[:500]}\n"
             f"{kb_block}"
             f"\n\n{UNIQUIFICATION_RULES}\n\n"
-            f"СТРУКТУРА:\n"
-            f"1. Хук — вопрос/интригующее утверждение по теме новости\n"
+            f"ОБЯЗАТЕЛЬНО:\n"
+            f"1. Хук — вопрос/интригующее утверждение по теме новости (НЕ «Сегодня хочу поделиться» и не «Сегодня я расскажу»)\n"
             f"2. Экспертный разбор: 800-1000 знаков от первого лица, личный опыт\n"
             f"3. Вывод-совет + вопрос аудитории + 1-2 хештега\n\n"
             f"СТИЛЬ (как пишет Даша):\n"

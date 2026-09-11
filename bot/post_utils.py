@@ -58,7 +58,14 @@ def smart_truncate_html(text: str, limit: int, footer_len: int = 0) -> str:
 
 # ─── Text Cleaning ──────────────────────────────────────────────────────────
 
-_BANNED_OPENINGS = ["даша:", "редакция:", "привет", "здравствуй", "всем привет"]
+_BANNED_OPENINGS = [
+    "даша:", "редакция:", "привет", "здравствуй", "всем привет",
+    # Банальные зачины, убивающие вовлечение:
+    "сегодня хочу поделиться", "сегодня я хочу", "сегодня я расскажу",
+    "сегодня расскажу", "сегодня я размышляю", "сегодня хочу рассказать",
+    "в современном мире", "в наше время", "давайте поговорим о",
+    "друзья, сегодня", "пост о том, как",
+]
 
 _PROMPT_LEAKAGE_PATTERNS = [
     r"^напиши\s+пост", r"^напиши\s+комментар", r"^стиль\s*[(:]",
@@ -114,7 +121,14 @@ def clean_post_text(text: str, bot_name: str = "Даша") -> str:
 
     for opening in _BANNED_OPENINGS:
         if text.lower().startswith(opening):
-            text = text[len(opening):].lstrip(" ,!.—-:")
+            # Срезаем ПЕРВОЕ ПРЕДЛОЖЕНИЕ целиком: «Сегодня хочу поделиться с вами
+            # примером. Квартира...» → «Квартира...» (иначе остаётся обрывок «с вами...»)
+            for i, ch in enumerate(text[:400]):
+                if ch in ".!?" and (i + 1 >= len(text) or text[i + 1] in " \n"):
+                    text = text[i + 1:].lstrip(" \n")
+                    break
+            else:
+                text = text[len(opening):].lstrip(" ,!.—-:")
             break
 
     text = re.sub(r"\n{3,}", "\n\n", text)

@@ -90,3 +90,13 @@ async def cmd_broadcast(message):
         await message.bot.send_message(chat_id, parts[2])
         await message.reply("✅ Отправлено")
     except Exception as e: await message.reply(f"❌ Ошибка: {e}")
+
+@admin_router.message(Command("post_now"))
+async def cmd_post_now(message):
+    """Форс-пост в канал: будит шедулер немедленно (антифлуд 60 сек)."""
+    if not _is_admin(message): return
+    from bot.scheduler_control import request_force_post
+    if request_force_post():
+        await message.reply("🚀 Форс-пост запрошен — шедулер проснётся и опубликует пост в течение ~30 секунд. Проверь @abakan_mebel.")
+    else:
+        await message.reply("⏳ Запрос уже был меньше минуты назад — подожди немного.")
