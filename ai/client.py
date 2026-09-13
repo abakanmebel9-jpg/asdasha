@@ -22,6 +22,39 @@ if not _POLLINATIONS_KEYS:
     if _k: _POLLINATIONS_KEYS.append(_k)
 _POLLINATIONS_KEY_IDX = 0  # round-robin index
 
+# Раунд 12: Pollinations при исчерпанном бюджете ключа возвращает HTTP 200,
+# а в content — англ. текст «The API key used for this request has reached
+# its budget…». Раньше он считался валидным ответом → валидатор мебели
+# отбраковывал → в канале тишина. Детектим такие ответы и помечаем ключ
+# мёртвым (ротация на следующий), последний фолбэк — анонимный тир.
+_POLLINATIONS_ERROR_MARKERS = [
+    "reached its budget",          # «The API key … has reached its budget»
+    "raise the key budget",        # подсказка из того же сообщения
+    "enter.pollinations.ai",       # ссылка из ошибки бюджета
+    "insufficient quota",          # OpenAI-стиль квот
+    "quota exceeded",
+    "payment required",
+    "rate limit exceeded",
+]
+_POLL_KEY_DEAD: dict[str, float] = {}   # key → until_ts (бюджет исчерпан)
+_POLL_KEY_DEAD_SEC = 3600               # час: бюджет мог пополнить владелец
+
+
+def _is_pollinations_error_text(text: str) -> bool:
+    """True, если это не ответ модели, а сообщение об ошибке/лимите/рекламе."""
+    if not text:
+        return False
+    t = text.lower()
+    return any(m in t for m in _POLLINATIONS_ERROR_MARKERS)
+
+
+def _mark_poll_key_dead(key: str) -> None:
+    """Ключ без бюджета не работает — пауза на час, ротация на следующий."""
+    if not key:
+        return
+    _POLL_KEY_DEAD[key] = time.time() + _POLL_KEY_DEAD_SEC
+    logger.warning(f"Pollinations key …{key[-4:]} помечен мёртвым на {_POLL_KEY_DEAD_SEC}с (бюджет исчерпан)")
+
 # Cloudflare Workers AI (Tier-2 fallback — more reliable, no rate limits)
 _CF_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 _CF_ACCOUNTS = []
@@ -53,13 +86,20 @@ def _strip_pollinations_ads(text):
     return text
 
 def _get_pollinations_key():
-    """Get next API key (round-robin). Returns empty string if none."""
+    """Get next API key (round-robin), пропуская мёртвые (без бюджета).
+
+    Если все ключи мертвы — вернёт "" (попытка через анонимный тир).
+    """
     global _POLLINATIONS_KEY_IDX
     if not _POLLINATIONS_KEYS:
         return ""
-    key = _POLLINATIONS_KEYS[_POLLINATIONS_KEY_IDX % len(_POLLINATIONS_KEYS)]
-    _POLLINATIONS_KEY_IDX += 1
-    return key
+    now = time.time()
+    for _ in range(len(_POLLINATIONS_KEYS)):
+        key = _POLLINATIONS_KEYS[_POLLINATIONS_KEY_IDX % len(_POLLINATIONS_KEYS)]
+        _POLLINATIONS_KEY_IDX += 1
+        if _POLL_KEY_DEAD.get(key, 0) < now:
+            return key
+    return ""  # все ключи в cooldown → анонимный запрос без авторизации
 
 def _pollinations_headers():
     """Build Authorization header if API key available."""
@@ -194,10 +234,12 @@ async def _call_pollinations_direct(messages, max_tokens, timeout=30.0, retries=
     # ВАЖНО: без referrer/reasoning_effort — referrer ведёт на платный тир (402)
     payload = {"model": _POLLINATIONS_MODEL, "messages": messages, "temperature": 0.9, "max_tokens": max_tokens, "stream": False}
     sem = _get_pollinations_sem()
+    saw_budget_error = False
     for attempt in range(retries + 1):
         try:
             t_start = time.time()
-            headers = _pollinations_headers()
+            key = _get_pollinations_key()          # ротация пропускает мёртвые ключи
+            headers = {"Authorization": f"Bearer {key}"} if key else {}
             async with sem:
                 r = await _client.post(_POLLINATIONS_URL, json=payload, timeout=timeout, headers=headers)
             elapsed = time.time() - t_start
@@ -208,6 +250,14 @@ async def _call_pollinations_direct(messages, max_tokens, timeout=30.0, retries=
                     msg = choices[0].get("message", {}) or {}
                     content = (msg.get("content", "") or "").strip()
                     if content:
+                        # Раунд 12: HTTP 200 может нести текст ошибки бюджета — это НЕ ответ
+                        if _is_pollinations_error_text(content):
+                            saw_budget_error = True
+                            if key:
+                                _mark_poll_key_dead(key)
+                            if attempt < retries:
+                                continue        # ротация на следующий ключ / анонимный тир
+                            break
                         return _strip_pollinations_ads(content)
                     reasoning = (msg.get("reasoning", "") or "").strip()
                     if reasoning:
@@ -227,6 +277,10 @@ async def _call_pollinations_direct(messages, max_tokens, timeout=30.0, retries=
                 await asyncio.sleep(2.0)
                 continue
             return ""
+    if saw_budget_error:
+        # Все ключи без бюджета: короткая глобальная пауза, дальше — Cloudflare/прочие
+        _poll_skip_until = time.time() + 90
+        _stats["last_error"] = "Pollinations: все ключи без бюджета (cooldown 90s)"
     return ""
 
 async def _call_pollinations_get(prompt, timeout=12.0):
@@ -238,13 +292,18 @@ async def _call_pollinations_get(prompt, timeout=12.0):
     url = f"https://text.pollinations.ai/{quote(prompt)}"
     sem = _get_pollinations_sem()
     try:
+        key = _get_pollinations_key()
         headers = {"Accept": "text/plain"}
-        headers.update(_pollinations_headers())
+        if key: headers["Authorization"] = f"Bearer {key}"
         async with sem:
             r = await _client.get(url, timeout=timeout, headers=headers)
         if r.status_code == 200:
             text = r.text.strip()
-            if text and len(text) > 2: return text[:2000]
+            if text and len(text) > 2:
+                if _is_pollinations_error_text(text):
+                    _mark_poll_key_dead(key) if key else None
+                    return ""
+                return text[:2000]
         if r.status_code in (402, 429):
             _poll_skip_until = time.time() + 90
         return ""
@@ -482,9 +541,9 @@ async def vision(prompt, image_data_uri, system="", max_tokens=300):
             _mark_gw_failure()
     # Tier 2: Pollinations multimodal (openai model поддерживает vision)
     try:
-        payload = {"model": "openai", "messages": messages, "max_tokens": max_tokens, "temperature": 0.7, "stream": False, "referrer": "dasha-bot"}
-        headers = _pollinations_headers()
-        headers["Referer"] = "dasha-bot"
+        payload = {"model": "openai", "messages": messages, "max_tokens": max_tokens, "temperature": 0.7, "stream": False}
+        key = _get_pollinations_key()
+        headers = {"Authorization": f"Bearer {key}"} if key else {"Referer": "dasha-bot"}
         r = await _client.post(_POLLINATIONS_URL, json=payload, timeout=45.0, headers=headers)
         if r.status_code == 200:
             data = r.json()
@@ -492,10 +551,12 @@ async def vision(prompt, image_data_uri, system="", max_tokens=300):
             if choices:
                 content = (choices[0].get("message", {}) or {}).get("content", "") or ""
                 content = content.strip()
-                if content:
+                if content and not _is_pollinations_error_text(content):
                     _stats["success"] += 1; _stats["pollinations_backup"] += 1
                     logger.info(f"AI vision=pollinations ({time.time()-t0:.1f}s) len={len(content)}")
                     return _strip_pollinations_ads(content)
+                if content:
+                    if key: _mark_poll_key_dead(key)
         _stats["fail"] += 1
     except Exception as e:
         _stats["fail"] += 1

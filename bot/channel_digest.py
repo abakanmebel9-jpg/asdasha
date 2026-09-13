@@ -62,10 +62,40 @@ def _tip_of_the_week(week_key: str) -> str:
     return f"{tip['title']}: {tip['text']}"
 
 
+def _cyrillic_ratio(text: str) -> float:
+    """Доля кириллицы среди букв (0.0–1.0). Для отбраковки англ. заголовков."""
+    letters = [c for c in (text or "") if c.isalpha()]
+    if not letters:
+        return 0.0
+    cyr = sum(1 for c in letters if "а" <= c.lower() <= "я" or c.lower() == "ё")
+    return cyr / len(letters)
+
+
+def _digest_topic_ok(title: str) -> bool:
+    """Тема достойна дайджеста: по-русски и про мебель/интерьер.
+
+    Раунд 12: раньше в «Итоги недели» попадали англ. заголовки отбракованных
+    новостей («Fiat 500 restomod», «Cut a Toy Dinosaur…») — они лежали в
+    posted_news как title скипов. Двойной фильтр: кириллица + мебельный фильтр.
+    """
+    t = (title or "").strip()
+    if len(t) < 15:
+        return False
+    if _cyrillic_ratio(t) < 0.6:
+        return False
+    try:
+        from bot.main import _is_furniture_news
+        return _is_furniture_news(t)
+    except Exception:
+        # Фильтр недоступен — хотя бы не пускаем явно немебельное
+        return True
+
+
 def build_digest_text(titles: list, week_key: str) -> str:
     """Текст дайджеста. Без HTML — публикуется plain-текстом (заголовки внешние)."""
     lines = ["🗓 <b>Итоги недели — мебельный дайджест</b>\n"]
-    topics = [_shorten_title(t) for t in titles if t]
+    topics = [t for t in titles if _digest_topic_ok(t)]
+    topics = [_shorten_title(t) for t in topics]
     topics = [t for t in topics if len(t) >= 15][:5]
     if topics:
         lines.append("Что разбирали на этой неделе:")

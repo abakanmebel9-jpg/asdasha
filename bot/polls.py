@@ -108,6 +108,9 @@ async def maybe_send_poll(bot, channel_id: int) -> bool:
     try:
         # Есть правильный ответ → квиз «Проверь себя» с пояснением; иначе обычный опрос
         is_quiz = poll["correct"] is not None
+        # Раунд 12: в каналах Telegram разрешены ТОЛЬКО анонимные опросы —
+        # неанонимные валились с «Bad Request: non-anonymous polls can't
+        # be sent to channel chats» (видно в логах run 3100)
         if is_quiz:
             await bot.send_poll(
                 chat_id=channel_id,
@@ -116,14 +119,14 @@ async def maybe_send_poll(bot, channel_id: int) -> bool:
                 type="quiz",
                 correct_option_id=poll["correct"],
                 explanation=(poll["explanation"] or "")[:200],
-                is_anonymous=False,
+                is_anonymous=True,
             )
         else:
             await bot.send_poll(
                 chat_id=channel_id,
                 question="📊 " + poll["question"],
                 options=poll["options"],
-                is_anonymous=False,
+                is_anonymous=True,
                 allows_multiple_answers=False,
             )
         await db.mark_news_posted(_LAST_KEY, "poll-timestamp")

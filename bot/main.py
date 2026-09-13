@@ -712,12 +712,13 @@ class DashaBot:
                     if len(candidates) >= 4:
                         break
 
+                fb_ok = False
                 if not candidates:
                     # AI-generated fallback: мебельные темы (без повторов циклом),
                     # с предочтением тематического фокуса дня недели (раунд 11)
                     topic = await self._pick_fallback_topic(furniture_topics, _next_topic)
                     logger.info(f"No fresh furniture news — AI-generated topic: {topic}")
-                    await self._post_ai_topic(topic, mood, channel_id)
+                    fb_ok = await self._post_ai_topic(topic, mood, channel_id)
 
                 # 3. Try candidates until we post 1 (or exhaust candidates)
                 posted = False
@@ -732,7 +733,13 @@ class DashaBot:
                     except Exception as e:
                         logger.error(f"Post news item error: {e}")
                 if not posted and not candidates:
-                    logger.info("Cycle complete: fallback topic posted")
+                    # Раунд 12: раньше здесь логировалось «posted» безусловно —
+                    # даже когда _post_ai_topic вернул False (бюджет AI исчерпан),
+                    # и канал молчал незаметно для мониторинга
+                    if fb_ok:
+                        logger.info("Cycle complete: fallback topic posted")
+                    else:
+                        logger.warning("Cycle complete: fallback topic FAILED — AI providers unavailable (см. last_error в /stats)")
                 elif not posted:
                     logger.info(f"Cycle complete: no posts from {len(candidates)} candidates")
 
@@ -944,11 +951,14 @@ class DashaBot:
         is_valid, reason = validate_post_text(ai_text)
         if not is_valid:
             logger.warning(f"Post validation FAILED ({reason}) — marking as skipped: {title[:40]}")
-            # Mark as posted so scheduler moves to next news
+            # Mark as posted so scheduler moves to next news.
+            # Раунд 12: БЕЗ title в БД — иначе отбракованные англ. заголовки
+            # попадают в get_posted_titles_since → в дайджест канала (был
+            # прод-кейс: «Fiat 500 restomod», «Cut a Toy Dinosaur…» в итогах недели)
             if news_id:
-                await db.mark_news_posted(news_id, title)
+                await db.mark_news_posted(news_id, "")
             if url:
-                await db.mark_news_posted(url_normalize(url), title)
+                await db.mark_news_posted(url_normalize(url), "")
             return False
 
         # Минимальное качество: короткие ответы AI отклоняем и берём следующую новость
