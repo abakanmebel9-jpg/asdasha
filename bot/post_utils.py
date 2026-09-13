@@ -226,6 +226,20 @@ _POLITICS_KEYWORDS = [
 
 _NSFW_KEYWORDS = ["порн", "эрот", "секс", "18+", "nsfw"]
 
+
+def _nsfw_hit(t: str) -> str | None:
+    """NSFW-проверка с границей слова.
+
+    Раунд 13: раньше «порн» ловился подстрокой — посты со словами
+    «спорная/спорный/оспаривать» отбраковывались как порно (прод-кейс:
+    статик-пост «Карго-секции… спорная фича»). Теперь — только \b на начале
+    слова: «порно», «порнография» ловятся, «спорная» — нет.
+    """
+    for kw in _NSFW_KEYWORDS:
+        if re.search(rf"\b{re.escape(kw)}", t):
+            return kw
+    return None
+
 _FURNITURE_KEYWORDS = [
     "мебел", "дизайн", "интерьер", "кухн", "шкаф", "стол", "стул", "кресло",
     "диван", "кровать", "тумб", "комод", "полк", "фасад", "массив", "лдсп",
@@ -251,9 +265,9 @@ def validate_post_text(text: str, require_keywords: list = None) -> Tuple[bool, 
     for kw in _POLITICS_KEYWORDS:
         if kw in t:
             return False, f"politics:{kw}"
-    for kw in _NSFW_KEYWORDS:
-        if kw in t:
-            return False, f"nsfw:{kw}"
+    nsfw = _nsfw_hit(t)
+    if nsfw:
+        return False, f"nsfw:{nsfw}"
 
     keywords = require_keywords or _FURNITURE_KEYWORDS
     if not any(kw.lower() in t for kw in keywords):

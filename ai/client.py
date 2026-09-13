@@ -497,6 +497,12 @@ async def _call_cloudflare(messages, max_tokens, timeout=30.0):
                 content = (result.get("response", "") or "").strip()
                 if content:
                     return content
+            # 200 без контента — модель вернула пустоту (частый кейс при исчерпании квоты)
+            _stats["last_error"] = f"Cloudflare 200 без контента: {str(data)[:150]}"
+            return ""
+        # Раунд 13: диагностика — почему Cloudflare молчит (квота/авторизация?)
+        _stats["last_error"] = f"Cloudflare HTTP {r.status_code}: {r.text[:150]}"
+        logger.warning(f"Cloudflare HTTP {r.status_code}: {r.text[:150]}")
         return ""
     except Exception as e:
         _stats["last_error"] = f"Cloudflare: {type(e).__name__}: {e}"

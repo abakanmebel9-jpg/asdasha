@@ -30,12 +30,21 @@ _NEWS_STRONG_KEYWORDS = [
     "лдсп", "мдф", "дсп", "массив", "столешниц", "петл", "направляющ",
     "доводчик", "купо", "купе", "полк", "цоколь", "фартук", "мойк",
     "furniture", "kitchen", "cabine", "mebel",
+    # Раунд 13: англ. мебельные слова — раньше отсекались даже явные
+    # мебельные новости («The New IKEA Storage Find», «Chrome Bed Frame»):
+    # источник furniture-news.json — англ. заголовки
+    "sofa", "couch", "wardrobe", "dresser", "drawer", "shelf", "shelves",
+    "bookcase", "table", "chair", "armchair", "bed frame", "headboard",
+    "countertop", "cabinet", "cupboard", "sideboard", "ottoman", "stool",
+    "ikea", "plywood", "veneer", "laminate", "hardware", "hinge", "drawer slide",
 ]
 # weak — интерьер/ремонт контекст (допускаем, только если нет чужих тем)
 _NEWS_WEAK_KEYWORDS = [
     "интерьер", "ремонт", "планировк", "хранение", "квартир", "спальн",
     "гостин", "детск", "ванн", "санузл", "коридор", "кладов", "ниш",
     "дизайн проект", "дизайн-проект", "дизайнер интерьер",
+    "interior", "storage", "declutter", "home improvement", "renovation",
+    "makeover", "room ideas", "small space", "organization",
 ]
 # Чужие темы — никогда не постим, даже если в тексте мелькает «дизайн»
 _NEWS_EXCLUDE_KEYWORDS = [
@@ -43,6 +52,11 @@ _NEWS_EXCLUDE_KEYWORDS = [
     "одежд", "модн", "показ", "бутик", "ткан", "обув", "косметик",
     "автомобил", "дилер", "шиномонтаж", "ресторан", "отель", "кофейн",
     "украшен", "ювелир", "эзотерик", "астролог", "гороскоп", "нумеролог",
+    # Раунд 13: англ. стоп-слова (спорт/мода/авто/еда — не интерьер).
+    # Без «car » в лоб — ловит «Oscar» и прочие ложные включения
+    "sport", "football", "soccer", "hockey", "nba", "fashion", "outfit",
+    "celebrity", "cars ", "automotive", "restomod", "restaurant", "recipe",
+    "travel", "crypto", "horoscope", "zodiac", "astrolog",
 ]
 
 def _is_furniture_news(title: str, summary: str = "") -> bool:
@@ -715,7 +729,8 @@ class DashaBot:
                 fb_ok = False
                 if not candidates:
                     # AI-generated fallback: мебельные темы (без повторов циклом),
-                    # с предочтением тематического фокуса дня недели (раунд 11)
+                    # с предочтением тематического фокуса дня недели (раунд 11);
+                    # при мёртвом AI внутри — статик-пост из банка (раунд 13)
                     topic = await self._pick_fallback_topic(furniture_topics, _next_topic)
                     logger.info(f"No fresh furniture news — AI-generated topic: {topic}")
                     fb_ok = await self._post_ai_topic(topic, mood, channel_id)
@@ -732,6 +747,12 @@ class DashaBot:
                             logger.info(f"News skipped (AI empty or validation) — trying next candidate")
                     except Exception as e:
                         logger.error(f"Post news item error: {e}")
+                if not posted and candidates:
+                    # Раунд 13: новости были, но AI не смог (пустой/забракован) —
+                    # фолбэк-тема со статик-постом, канал не молчит
+                    topic = await self._pick_fallback_topic(furniture_topics, _next_topic)
+                    logger.info(f"All {len(candidates)} news candidates failed (AI down?) — fallback topic: {topic[:40]}")
+                    fb_ok = await self._post_ai_topic(topic, mood, channel_id) or fb_ok
                 if not posted and not candidates:
                     # Раунд 12: раньше здесь логировалось «posted» безусловно —
                     # даже когда _post_ai_topic вернул False (бюджет AI исчерпан),
@@ -799,8 +820,23 @@ class DashaBot:
         )
         ai_text = await _generate_channel_post(prompt, CHANNEL_POST_PROMPT, ptype)
         if not ai_text:
-            logger.warning("AI fallback topic: empty/incomplete response")
-            return False
+            # Раунд 13: все AI-провайдеры мертвы (бюджет Pollinations, квота
+            # Cloudflare, ключей Groq/Gemini нет) → статик-пост из банка,
+            # чтобы канал не молчал бесконечно (прод-кейс 13.09.2026)
+            try:
+                from bot import static_posts
+                static_item = await static_posts.get_static_post(db)
+                if static_item:
+                    s_topic, s_text = static_item
+                    logger.warning(f"AI providers down — posting STATIC fallback: {s_topic[:40]}")
+                    ai_text = await _add_topic_hashtags(s_text, s_topic)
+                    topic = s_topic   # хештеги, лог и дедуп sp: — по теме статик-поста
+                else:
+                    logger.warning("AI fallback topic: empty/incomplete response (статик-банк исчерпан?)")
+                    return False
+            except Exception as e:
+                logger.warning(f"Static fallback error: {e}")
+                return False
         is_valid, reason = validate_post_text(ai_text)
         if not is_valid or len(ai_text) < 250:
             logger.warning(f"AI fallback topic validation FAILED ({reason}, len={len(ai_text)}) — {topic[:40]}")
@@ -859,10 +895,17 @@ class DashaBot:
                     return False
         if msg is not None:
             await self._react_to_own_post(channel_id, msg.message_id, (caption_full or text_full)[:200])
-        # Пометка против повтора темы после рестартов
+        # Пометка против повтора темы после рестартов (AI-тема ИЛИ статик-пост)
         tfp = title_fingerprint(topic)
         if tfp:
             await db.mark_news_posted(f"fb:{tfp}", topic)
+        # Если ушёл статик-пост — помечаем и его ключом дедупа (title = мебельная
+        # русская тема → легитимно попадает в еженедельный дайджест)
+        try:
+            from bot import static_posts
+            await db.mark_news_posted(static_posts.mark_key_for_topic(topic), topic)
+        except Exception:
+            pass
         return True
 
     async def _post_news_item(self, news_item, mood, channel_id, channel_prompt):
